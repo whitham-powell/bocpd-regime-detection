@@ -64,6 +64,26 @@ class ObservationModel(ABC):
             New observation.
         """
 
+    def predictive_mean_var(self) -> tuple:
+        """Return (mean, variance) of the predictive distribution.
+
+        For univariate models, returns (float, float).
+        For multivariate models, returns (ndarray, ndarray) where
+        mean is shape (D,) and variance is the (D, D) covariance matrix.
+
+        Used to construct mixture predictive envelopes. Models that do
+        not support this should return (nan, nan).
+
+        Implementations may return inf for the variance (or, less
+        commonly, the mean) when the predictive distribution's moments
+        do not exist. For example, the Student-t predictive of NIG has
+        infinite variance when df <= 2 (i.e. alpha <= 1). This is not
+        a bug — it reflects the prior's genuine uncertainty before
+        enough data has been observed. The BOCPD loop handles this by
+        excluding such run lengths from the mixture computation.
+        """
+        return (np.nan, np.nan)
+
     def copy(self) -> ObservationModel:
         """Return an independent copy of this model (including current state).
 
@@ -240,6 +260,22 @@ class UnivariateNormalNIG(ExponentialFamilyModel):
         self.alpha = params["alpha"]
         self.beta = params["beta"]
 
+    def predictive_mean_var(self) -> tuple[float, float]:
+        """Predictive Student-t mean and variance.
+
+        The predictive distribution is Student-t with:
+            df    = 2 * alpha
+            loc   = mu
+            scale = beta * (kappa + 1) / (alpha * kappa)
+
+        Variance = scale * df / (df - 2)  when df > 2.
+        """
+        df = 2.0 * self.alpha
+        scale = self.beta * (self.kappa + 1.0) / (self.alpha * self.kappa)
+        mean = self.mu
+        var = scale * df / (df - 2.0) if df > 2.0 else np.inf
+        return (mean, var)
+
 
 # =============================================================================
 # Multivariate Normal with Normal-Inverse-Wishart Prior
@@ -377,6 +413,24 @@ class MultivariateNormalNIW(ExponentialFamilyModel):
         new.S = self.S.copy()
         return new
 
+    def predictive_mean_var(self) -> tuple[np.ndarray, np.ndarray]:
+        """Predictive multivariate Student-t mean and covariance.
+
+        The predictive is multivariate Student-t with:
+            df    = nu - D + 1
+            loc   = mu_n  (posterior mean)
+            shape = Psi_n * (kappa_n + 1) / (kappa_n * df)
+
+        Covariance = shape * df / (df - 2)  when df > 2.
+        """
+        params = self._get_params()
+        D = self.dim
+        df = params["nu"] - D + 1.0
+        mu_n = (self.kappa0 * self.mu0 + self.n * self.x_bar) / params["kappa"]
+        shape = params["Psi"] * (params["kappa"] + 1.0) / (params["kappa"] * df)
+        cov = shape * df / (df - 2.0) if df > 2.0 else np.full_like(shape, np.inf)
+        return (mu_n, cov)
+
 
 # =============================================================================
 # Poisson-Gamma (example conjugate model for count data)
@@ -423,3 +477,14 @@ class PoissonGamma(ExponentialFamilyModel):
     def _set_params(self, params: dict) -> None:
         self.alpha = params["alpha"]
         self.beta = params["beta"]
+
+    def predictive_mean_var(self) -> tuple[float, float]:
+        """Predictive Negative Binomial mean and variance.
+
+        The predictive is NegBin(r=alpha, p=beta/(beta+1)):
+            mean = alpha / beta
+            var  = alpha * (beta + 1) / beta^2
+        """
+        mean = self.alpha / self.beta
+        var = self.alpha * (self.beta + 1.0) / (self.beta**2)
+        return (mean, var)

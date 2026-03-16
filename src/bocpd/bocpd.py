@@ -83,6 +83,12 @@ class BOCPD:
                 Most probable run length at each time step.
             'expected_run_length' : np.ndarray, shape (T,)
                 E[r_t | x_{1:t}] at each time step.
+            'predictive_mean' : np.ndarray, shape (T,)
+                One-step-ahead predictive mean E[x_t | x_{1:t-1}],
+                averaged over run lengths.
+            'predictive_var' : np.ndarray, shape (T,)
+                One-step-ahead predictive variance Var[x_t | x_{1:t-1}],
+                averaged over run lengths (includes mixture variance).
         """
         T = len(data)
 
@@ -91,6 +97,8 @@ class BOCPD:
         change_point_prob = np.zeros(T)
         map_run_length = np.zeros(T, dtype=int)
         expected_run_length = np.zeros(T)
+        predictive_mean = np.full(T, np.nan)
+        predictive_var = np.full(T, np.nan)
 
         # --- Initialization ---
         # At t=0, before seeing any data, we have a single run of length 0
@@ -106,6 +114,42 @@ class BOCPD:
         for t in range(T):
             x = data[t]
             n_run_lengths = len(joint)
+
+            # Step 0: One-step-ahead predictive (before observing x_t)
+            # Mixture over run lengths: E[x_t] = sum_r P(r) * mu_r
+            # Var[x_t] = sum_r P(r) * (var_r + mu_r^2) - E[x_t]^2
+            # Only computed for univariate models (scalar mean/var).
+            #
+            # Some run lengths may have non-finite predictive moments
+            # (e.g. NIG with alpha <= 1 gives a Student-t with df <= 2,
+            # whose variance is infinite). These are excluded from the
+            # mixture and the weights renormalized over the remaining
+            # run lengths. At t=0, when only the fresh prior exists and
+            # it has infinite variance, no finite run lengths are
+            # available, so the predictive is left as NaN for that step.
+            m0, _ = models[0].predictive_mean_var()
+            is_scalar = np.ndim(m0) == 0 and not np.isnan(m0)
+
+            if is_scalar:
+                means = np.zeros(n_run_lengths)
+                varis = np.zeros(n_run_lengths)
+                for r in range(n_run_lengths):
+                    means[r], varis[r] = models[r].predictive_mean_var()
+
+                # Exclude run lengths with infinite variance (e.g. NIG
+                # with alpha <= 1 where the Student-t has no finite
+                # variance) and renormalize the weights.
+                finite = np.isfinite(varis) & np.isfinite(means)
+                w = np.where(finite, joint, 0.0)
+                w_sum = np.sum(w)
+                if w_sum > 0:
+                    w /= w_sum
+                    m_fin = np.where(finite, means, 0.0)
+                    v_fin = np.where(finite, varis, 0.0)
+                    predictive_mean[t] = np.sum(w * m_fin)
+                    predictive_var[t] = (
+                        np.sum(w * (v_fin + m_fin**2)) - predictive_mean[t] ** 2
+                    )
 
             # Step 1: Evaluate predictive probability under each run length
             log_pred = np.zeros(n_run_lengths)
@@ -167,6 +211,8 @@ class BOCPD:
             "change_point_prob": change_point_prob,
             "map_run_length": map_run_length,
             "expected_run_length": expected_run_length,
+            "predictive_mean": predictive_mean,
+            "predictive_var": predictive_var,
         }
 
 

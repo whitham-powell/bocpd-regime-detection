@@ -26,15 +26,11 @@ classifiers = [
 ]
 
 dependencies = [
+    "finfeatures[yfinance] @ git+https://github.com/whitham-powell/finfeatures.git",
     "matplotlib>=3.7",
     "numpy>=1.24",
     "scipy>=1.10",
     "seaborn>=0.12",
-]
-
-[project.optional-dependencies]
-data = [
-    "finfeatures[yfinance] @ git+https://github.com/whitham-powell/finfeatures.git",
 ]
 
 [project.urls]
