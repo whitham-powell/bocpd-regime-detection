@@ -16,9 +16,10 @@ Adams, R. P., & MacKay, D. J. C. (2007).
     Bayesian Online Changepoint Detection. arXiv:0710.3742.
 """
 
+from __future__ import annotations
+
 import numpy as np
 
-from .observation_model import ObservationModel
 from .hazard import ConstantHazard
 
 
@@ -55,8 +56,8 @@ class BOCPD:
     def __init__(
         self,
         model_factory: callable,
-        hazard_fn: callable = None,
-        r_max: int = None,
+        hazard_fn: callable | None = None,
+        r_max: int | None = None,
     ):
         self.model_factory = model_factory
         self.hazard_fn = hazard_fn or ConstantHazard(lam=200)
@@ -148,9 +149,7 @@ class BOCPD:
             run_length_posterior.append(new_joint.copy())
             change_point_prob[t] = new_joint[0]
             map_run_length[t] = np.argmax(new_joint)
-            expected_run_length[t] = np.sum(
-                np.arange(len(new_joint)) * new_joint
-            )
+            expected_run_length[t] = np.sum(np.arange(len(new_joint)) * new_joint)
 
             # Step 8: Update observation models
             # - Each existing model incorporates x (for its run length hypothesis)
@@ -175,10 +174,11 @@ class BOCPD:
 # Post-processing: extract change points from BOCPD output
 # =============================================================================
 
+
 def extract_change_points(
     result: dict,
     method: str = "expected_run_length",
-    threshold: float = None,
+    threshold: float | None = None,
     min_gap: int = 20,
 ) -> np.ndarray:
     """Extract discrete change point indices from BOCPD output.
@@ -233,7 +233,9 @@ def extract_change_points(
 
 
 def _extract_from_expected_run_length(
-    erl: np.ndarray, threshold: float = None, min_gap: int = 20,
+    erl: np.ndarray,
+    threshold: float | None = None,
+    min_gap: int = 20,
 ) -> np.ndarray:
     """Detect change points as sharp drops in expected run length.
 
@@ -243,7 +245,6 @@ def _extract_from_expected_run_length(
     if threshold is None:
         threshold = 0.5  # 50% drop from recent max
 
-    T = len(erl)
     running_max = np.maximum.accumulate(erl)
 
     # Flag where ERL drops significantly relative to recent max
@@ -252,12 +253,13 @@ def _extract_from_expected_run_length(
         relative_drop = 1.0 - erl / np.maximum(running_max, 1.0)
 
     candidates = np.where(relative_drop > threshold)[0]
-    return _merge_nearby(candidates, erl, min_gap, pick="max_drop",
-                         score=relative_drop)
+    return _merge_nearby(candidates, erl, min_gap, pick="max_drop", score=relative_drop)
 
 
 def _extract_from_map_run_length(
-    map_rl: np.ndarray, threshold: float = None, min_gap: int = 20,
+    map_rl: np.ndarray,
+    threshold: float | None = None,
+    min_gap: int = 20,
 ) -> np.ndarray:
     """Detect change points where MAP run length drops to near zero."""
     if threshold is None:
@@ -266,12 +268,13 @@ def _extract_from_map_run_length(
     candidates = np.where(map_rl < threshold)[0]
 
     # Among candidates, prefer the point where MAP is smallest
-    return _merge_nearby(candidates, map_rl, min_gap, pick="min_value",
-                         score=map_rl)
+    return _merge_nearby(candidates, map_rl, min_gap, pick="min_value", score=map_rl)
 
 
 def _extract_from_posterior_mass(
-    posteriors: list, threshold: float = None, min_gap: int = 20,
+    posteriors: list,
+    threshold: float | None = None,
+    min_gap: int = 20,
     short_run_max: int = 20,
 ) -> np.ndarray:
     """Detect change points where posterior mass concentrates on short runs."""
@@ -286,8 +289,9 @@ def _extract_from_posterior_mass(
         short_mass[t] = np.sum(post[:k])
 
     candidates = np.where(short_mass > threshold)[0]
-    return _merge_nearby(candidates, short_mass, min_gap, pick="max_value",
-                         score=short_mass)
+    return _merge_nearby(
+        candidates, short_mass, min_gap, pick="max_value", score=short_mass
+    )
 
 
 def _merge_nearby(
@@ -333,10 +337,11 @@ def _pick_from_cluster(cluster, score, pick):
 # Confidence bounds for detected change points
 # =============================================================================
 
+
 def extract_change_points_with_bounds(
     result: dict,
     method: str = "expected_run_length",
-    threshold: float = None,
+    threshold: float | None = None,
     min_gap: int = 20,
     credible_mass: float = 0.90,
     aggregation_window: int = 10,
@@ -419,12 +424,14 @@ def extract_change_points_with_bounds(
 
         total_mass = np.sum(change_time_hist)
         if total_mass < 1e-12:
-            boundaries.append({
-                "index": int(cp),
-                "lower": int(max(0, cp - min_width)),
-                "upper": int(min(T - 1, cp + min_width)),
-                "severity": 0.0,
-            })
+            boundaries.append(
+                {
+                    "index": int(cp),
+                    "lower": int(max(0, cp - min_width)),
+                    "upper": int(min(T - 1, cp + min_width)),
+                    "severity": 0.0,
+                }
+            )
             continue
 
         # Normalize to a proper distribution
@@ -434,12 +441,14 @@ def extract_change_points_with_bounds(
         # (shortest interval containing credible_mass probability)
         nonzero_idx = np.where(change_time_hist > 1e-15)[0]
         if len(nonzero_idx) == 0:
-            boundaries.append({
-                "index": int(cp),
-                "lower": int(max(0, cp - min_width)),
-                "upper": int(min(T - 1, cp + min_width)),
-                "severity": 0.0,
-            })
+            boundaries.append(
+                {
+                    "index": int(cp),
+                    "lower": int(max(0, cp - min_width)),
+                    "upper": int(min(T - 1, cp + min_width)),
+                    "severity": 0.0,
+                }
+            )
             continue
 
         best_width = T
@@ -478,17 +487,19 @@ def extract_change_points_with_bounds(
         # Step 5: compute severity as the ERL drop magnitude
         lookback = min(cp, min_gap * 2)
         if lookback > 0:
-            pre_peak = np.max(erl[max(0, cp - lookback): cp + 1])
-            post_trough = np.min(erl[cp: min(T, cp + lookback + 1)])
+            pre_peak = np.max(erl[max(0, cp - lookback) : cp + 1])
+            post_trough = np.min(erl[cp : min(T, cp + lookback + 1)])
             severity = 1.0 - post_trough / max(pre_peak, 1.0)
         else:
             severity = 0.0
 
-        boundaries.append({
-            "index": int(cp),
-            "lower": int(lower),
-            "upper": int(upper),
-            "severity": float(severity),
-        })
+        boundaries.append(
+            {
+                "index": int(cp),
+                "lower": int(lower),
+                "upper": int(upper),
+                "severity": float(severity),
+            }
+        )
 
     return boundaries

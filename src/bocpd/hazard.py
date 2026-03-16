@@ -71,9 +71,7 @@ class IncreasingHazard:
 
     def __init__(self, scale: float = 200.0, shape: float = 2.0):
         if shape <= 1.0:
-            raise ValueError(
-                f"shape must be > 1 for increasing hazard, got {shape}"
-            )
+            raise ValueError(f"shape must be > 1 for increasing hazard, got {shape}")
         self.scale = scale
         self.shape = shape
 
@@ -118,6 +116,4 @@ class DecreasingHazard:
         return np.clip(h, self.h_min, 1.0)
 
     def __repr__(self) -> str:
-        return (
-            f"DecreasingHazard(a={self.a}, b={self.b}, h_min={self.h_min})"
-        )
+        return f"DecreasingHazard(a={self.a}, b={self.b}, h_min={self.h_min})"

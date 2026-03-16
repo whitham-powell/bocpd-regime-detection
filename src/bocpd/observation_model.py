@@ -18,16 +18,18 @@ normalizing-constant ratio trick, so subclasses only need to define:
     - _get_params() / _updated_params(stat)
 """
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from copy import deepcopy
 
 import numpy as np
 from scipy.special import gammaln, multigammaln
 
-
 # =============================================================================
 # Base Interface — this is all BOCPD sees
 # =============================================================================
+
 
 class ObservationModel(ABC):
     """Abstract interface for BOCPD observation models.
@@ -62,7 +64,7 @@ class ObservationModel(ABC):
             New observation.
         """
 
-    def copy(self) -> "ObservationModel":
+    def copy(self) -> ObservationModel:
         """Return an independent copy of this model (including current state).
 
         The default implementation uses deepcopy. Subclasses may override
@@ -74,6 +76,7 @@ class ObservationModel(ABC):
 # =============================================================================
 # Exponential Family Base — generic conjugate machinery
 # =============================================================================
+
 
 class ExponentialFamilyModel(ObservationModel, ABC):
     """Base class for conjugate exponential family observation models.
@@ -152,6 +155,7 @@ class ExponentialFamilyModel(ObservationModel, ABC):
 # Univariate Normal with Normal-Inverse-Gamma Prior
 # =============================================================================
 
+
 class UnivariateNormalNIG(ExponentialFamilyModel):
     """Univariate Gaussian with unknown mean and variance.
 
@@ -222,10 +226,7 @@ class UnivariateNormalNIG(ExponentialFamilyModel):
         kappa_new = self.kappa + n
         mu_new = (self.kappa * self.mu + n * x) / kappa_new
         alpha_new = self.alpha + n / 2.0
-        beta_new = (
-            self.beta
-            + 0.5 * n * (x - self.mu) ** 2 * self.kappa / kappa_new
-        )
+        beta_new = self.beta + 0.5 * n * (x - self.mu) ** 2 * self.kappa / kappa_new
         return {
             "mu": mu_new,
             "kappa": kappa_new,
@@ -243,6 +244,7 @@ class UnivariateNormalNIG(ExponentialFamilyModel):
 # =============================================================================
 # Multivariate Normal with Normal-Inverse-Wishart Prior
 # =============================================================================
+
 
 class MultivariateNormalNIW(ExponentialFamilyModel):
     """Multivariate Gaussian with unknown mean and covariance.
@@ -270,7 +272,7 @@ class MultivariateNormalNIW(ExponentialFamilyModel):
         dim: int,
         mu0: np.ndarray = None,
         kappa0: float = 1.0,
-        nu0: float = None,
+        nu0: float | None = None,
         Psi0: np.ndarray = None,
     ):
         self.dim = dim
@@ -282,9 +284,7 @@ class MultivariateNormalNIW(ExponentialFamilyModel):
         self.Psi0 = Psi0 if Psi0 is not None else np.eye(dim)
 
         if self.nu0 <= self.dim - 1:
-            raise ValueError(
-                f"nu0 must be > dim - 1 = {self.dim - 1}, got {self.nu0}"
-            )
+            raise ValueError(f"nu0 must be > dim - 1 = {self.dim - 1}, got {self.nu0}")
 
         # Sufficient statistics for current run (Welford-style)
         self.n = 0
@@ -327,11 +327,7 @@ class MultivariateNormalNIW(ExponentialFamilyModel):
             Psi_n = self.Psi0.copy()
         else:
             diff = x_bar - self.mu0
-            Psi_n = (
-                self.Psi0
-                + S
-                + (self.kappa0 * n / kappa_n) * np.outer(diff, diff)
-            )
+            Psi_n = self.Psi0 + S + (self.kappa0 * n / kappa_n) * np.outer(diff, diff)
 
         return {"kappa": kappa_n, "nu": nu_n, "Psi": Psi_n}
 
@@ -368,7 +364,7 @@ class MultivariateNormalNIW(ExponentialFamilyModel):
         self.x_bar = self.x_bar + dx / self.n
         self.S = self.S + ((self.n - 1) / self.n) * np.outer(dx, dx)
 
-    def copy(self) -> "MultivariateNormalNIW":
+    def copy(self) -> MultivariateNormalNIW:
         """Efficient copy — avoid deepcopy of numpy arrays."""
         new = MultivariateNormalNIW.__new__(MultivariateNormalNIW)
         new.dim = self.dim
@@ -385,6 +381,7 @@ class MultivariateNormalNIW(ExponentialFamilyModel):
 # =============================================================================
 # Poisson-Gamma (example conjugate model for count data)
 # =============================================================================
+
 
 class PoissonGamma(ExponentialFamilyModel):
     """Poisson likelihood with Gamma conjugate prior on the rate.

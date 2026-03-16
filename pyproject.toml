@@ -1,0 +1,94 @@
+[project]
+name = "bocpd"
+version = "0.1.0"
+description = "Bayesian Online Change Point Detection (Adams & MacKay 2007)"
+authors = [{ name = "Elijah Whitham-Powell" }]
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+keywords = [
+    "bayesian",
+    "change-point-detection",
+    "regime-detection",
+    "time-series",
+    "online-learning",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Mathematics",
+]
+
+dependencies = [
+    "matplotlib>=3.7",
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "seaborn>=0.12",
+]
+
+[project.optional-dependencies]
+data = [
+    "finfeatures[yfinance] @ git+https://github.com/whitham-powell/finfeatures.git",
+]
+
+[project.urls]
+Homepage = "https://github.com/whitham-powell/bocpd-regime-detection"
+Repository = "https://github.com/whitham-powell/bocpd-regime-detection"
+Issues = "https://github.com/whitham-powell/bocpd-regime-detection/issues"
+
+# ── Build ─────────────────────────────────────────────────────────────────
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+packages = ["bocpd"]
+
+# ── uv ────────────────────────────────────────────────────────────────────
+[tool.uv]
+default-groups = ["dev"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=4.1",
+    "ruff>=0.4",
+    "pre-commit>=3.0",
+    "ipykernel>=6.29.0",
+    "jupyter>=1.0.0",
+    "jupytext>=1.16.0",
+    "nbconvert>=7.0.0",
+]
+
+# ── Ruff (lint + format) ──────────────────────────────────────────────────
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]
+
+# ── Pytest ────────────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra -q --tb=short"
+
+# ── Coverage ──────────────────────────────────────────────────────────────
+[tool.coverage.run]
+source = ["bocpd"]
+branch = true
+omit = ["tests/*"]
+
+[tool.coverage.report]
+show_missing = true
