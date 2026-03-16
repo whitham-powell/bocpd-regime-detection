@@ -8,4 +8,3 @@ build/
 .ipynb_checkpoints/
 figures/*.png
 figures/*.pdf
-notebooks/*.ipynb
