@@ -197,7 +197,7 @@ for cp in cps_baseline:
     )
 ```
 
-    Baseline BOCPD: 0.99s
+    Baseline BOCPD: 1.01s
     Detected 11 change points:
       2020-02-24  90% CI [2020-02-20 -- 2020-02-28]  (8d wide)  severity=0.97
       2020-05-14  90% CI [2020-04-06 -- 2020-04-15]  (9d wide)  severity=0.86
@@ -241,14 +241,14 @@ plt.setp(ax_price.get_xticklabels(), visible=False)
 posteriors = bocpd_baseline["run_length_posterior"]
 plot_run_length_heatmap(ax_rl, posteriors, dates)
 draw_change_points(ax_rl, cps_baseline, dates, draw_ci=False, alpha_line=0.5)
-mark_events(ax_rl, KNOWN_EVENTS, dates, label_first=False)
+mark_events(ax_rl, KNOWN_EVENTS, dates, label_first=False, show_labels=False)
 plt.setp(ax_rl.get_xticklabels(), visible=False)
 
 # -- Panel 3: expected run length with credible bands --
 erl = bocpd_baseline["expected_run_length"]
 plot_erl(ax_erl, erl, dates)
 draw_change_points(ax_erl, cps_baseline, dates)
-mark_events(ax_erl, KNOWN_EVENTS, dates, label_first=False)
+mark_events(ax_erl, KNOWN_EVENTS, dates, label_first=False, show_labels=False)
 ax_erl.legend(fontsize=8)
 plt.setp(ax_erl.get_xticklabels(), visible=False)
 
@@ -262,7 +262,7 @@ ax_cpp.axhline(
     lw=1,
     label=f"Prior P(CP) = 1/λ = {1 / BASELINE_LAMBDA:.4f}",
 )
-mark_events(ax_cpp, KNOWN_EVENTS, dates, label_first=False)
+mark_events(ax_cpp, KNOWN_EVENTS, dates, label_first=False, show_labels=False)
 ax_cpp.set_ylabel("P(r_t=0 | x₁:t)")
 ax_cpp.set_xlabel("Date")
 ax_cpp.legend(fontsize=8)
@@ -273,7 +273,7 @@ fig.tight_layout()
 plt.show()
 ```
 
-    /tmp/ipykernel_24468/3482447707.py:56: UserWarning: This figure includes Axes that are not compatible with tight_layout, so results might be incorrect.
+    /tmp/ipykernel_18136/1939338632.py:56: UserWarning: This figure includes Axes that are not compatible with tight_layout, so results might be incorrect.
       fig.tight_layout()
 
 
@@ -341,19 +341,19 @@ for lam in LAMBDAS:
     λ sweep:
 
 
-      λ=  50  change_points= 11  (0.99s)
+      λ=  50  change_points= 11  (1.04s)
 
 
-      λ= 100  change_points= 11  (0.99s)
+      λ= 100  change_points= 11  (1.04s)
 
 
-      λ= 200  change_points= 11  (1.00s)
+      λ= 200  change_points= 11  (1.04s)
 
 
-      λ= 400  change_points= 10  (1.04s)
+      λ= 400  change_points= 10  (1.07s)
 
 
-      λ= 800  change_points= 12  (1.01s)
+      λ= 800  change_points= 12  (1.05s)
 
 
 
@@ -385,7 +385,7 @@ for i, (lam, col) in enumerate(zip(LAMBDAS, purples, strict=False)):
     )
     ax.axhline(1.0, color=col, lw=0.6, ls=":", alpha=0.7)  # E[r] = λ line
     draw_change_points(ax, e2_cps[lam], dates, color=col, draw_ci=False)
-    mark_events(ax, KNOWN_EVENTS, dates, label_first=False)
+    mark_events(ax, KNOWN_EVENTS, dates, label_first=False, show_labels=False)
     ax.set_ylabel("E[r_t] / λ")
     ax.legend(fontsize=8, loc="upper right")
     ax.grid(True, alpha=0.2)
@@ -528,13 +528,13 @@ for name, hazard in hazard_configs.items():
     Hazard comparison:
 
 
-      Constant  (λ=200)                    CPs= 11  (0.98s)
+      Constant  (λ=200)                    CPs= 11  (1.03s)
 
 
-      Increasing (scale=200)               CPs= 12  (1.00s)
+      Increasing (scale=200)               CPs= 12  (1.11s)
 
 
-      Decreasing (sticky)                  CPs=  1  (1.03s)
+      Decreasing (sticky)                  CPs=  1  (1.07s)
 
 
 
@@ -569,7 +569,7 @@ for i, ((name, result), col) in enumerate(
     erl = result["expected_run_length"]
     ax.plot(dates, erl, color=col, lw=1, label=f"{name}  ({len(e3_cps[name])} CPs)")
     draw_change_points(ax, e3_cps[name], dates, color=col, draw_ci=False)
-    mark_events(ax, KNOWN_EVENTS, dates, label_first=False)
+    mark_events(ax, KNOWN_EVENTS, dates, label_first=False, show_labels=False)
     ax.set_ylabel("E[run length]")
     ax.legend(fontsize=8, loc="upper right")
     ax.grid(True, alpha=0.25)
@@ -584,7 +584,7 @@ fig.tight_layout()
 plt.show()
 ```
 
-    /tmp/ipykernel_24468/2994030818.py:42: UserWarning: This figure includes Axes that are not compatible with tight_layout, so results might be incorrect.
+    /tmp/ipykernel_18136/3876711818.py:42: UserWarning: This figure includes Axes that are not compatible with tight_layout, so results might be incorrect.
       fig.tight_layout()
 
 
@@ -661,31 +661,31 @@ for kappa0 in KAPPA0_VALS:
     Prior sensitivity grid:
 
 
-      κ₀=  0.1  ν₀=  7  CPs= 11  (0.96s)
+      κ₀=  0.1  ν₀=  7  CPs= 11  (1.04s)
 
 
-      κ₀=  0.1  ν₀= 15  CPs= 12  (1.02s)
+      κ₀=  0.1  ν₀= 15  CPs= 12  (1.10s)
 
 
-      κ₀=  0.1  ν₀= 55  CPs= 10  (1.02s)
+      κ₀=  0.1  ν₀= 55  CPs= 10  (1.04s)
 
 
-      κ₀=  1.0  ν₀=  7  CPs= 11  (1.01s)
+      κ₀=  1.0  ν₀=  7  CPs= 11  (1.05s)
 
 
-      κ₀=  1.0  ν₀= 15  CPs= 10  (1.00s)
+      κ₀=  1.0  ν₀= 15  CPs= 10  (1.04s)
 
 
-      κ₀=  1.0  ν₀= 55  CPs=  7  (1.00s)
+      κ₀=  1.0  ν₀= 55  CPs=  7  (1.03s)
 
 
-      κ₀= 10.0  ν₀=  7  CPs= 13  (1.00s)
+      κ₀= 10.0  ν₀=  7  CPs= 13  (1.09s)
 
 
-      κ₀= 10.0  ν₀= 15  CPs= 10  (0.99s)
+      κ₀= 10.0  ν₀= 15  CPs= 10  (1.05s)
 
 
-      κ₀= 10.0  ν₀= 55  CPs=  6  (1.00s)
+      κ₀= 10.0  ν₀= 55  CPs=  6  (1.04s)
 
 
 
@@ -749,7 +749,7 @@ for key, label, col, lw in [
     ax.plot(dates, erl, color=col, lw=lw, label=label)
 
 draw_change_points(ax, e4_cps[base_key], dates, color=COLORS.cp, draw_ci=False)
-mark_events(ax, KNOWN_EVENTS, dates, label_first=False)
+mark_events(ax, KNOWN_EVENTS, dates, label_first=False, show_labels=False)
 ax.set_ylabel("Expected run length")
 ax.set_xlabel("Date")
 ax.set_title(
@@ -887,7 +887,7 @@ plt.setp(axes[0].get_xticklabels(), visible=False)
 for ax, (label, series, cps, col) in zip(axes[1:], method_data, strict=False):
     ax.plot(dates, series, color=col, lw=1, label=label)
     draw_change_points(ax, cps, dates, color=col, draw_ci=False, alpha_line=0.7)
-    mark_events(ax, KNOWN_EVENTS, dates, label_first=False)
+    mark_events(ax, KNOWN_EVENTS, dates, label_first=False, show_labels=False)
     ax.set_ylabel(label, fontsize=9)
     ax.legend(fontsize=8, loc="upper right")
     ax.grid(True, alpha=0.2)
@@ -960,7 +960,7 @@ print(f"{'Exp 5 — Posterior mass extraction':<40} {len(cps_mass):>5}")
     =================================================================
     Experiment                                 CPs      Time
     -----------------------------------------------------------------
-    Exp 1 — Baseline (λ=200, Constant, D=5)     11     0.99s
+    Exp 1 — Baseline (λ=200, Constant, D=5)     11     1.01s
     Exp 2 — λ=50                                11
     Exp 2 — λ=100                               11
     Exp 2 — λ=200                               11

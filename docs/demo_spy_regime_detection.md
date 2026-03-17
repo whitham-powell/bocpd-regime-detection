@@ -150,20 +150,20 @@ plot_predictive_envelope(
     result["predictive_var"],
 )
 draw_change_points(ax_pred, boundaries, dates_returns, draw_ci=False, alpha_line=0.5)
-mark_events(ax_pred, KNOWN_EVENTS, dates_returns, label_first=False)
+mark_events(ax_pred, KNOWN_EVENTS, dates_returns, label_first=False, show_labels=False)
 ax_pred.legend(fontsize=8, loc="upper right")
 plt.setp(ax_pred.get_xticklabels(), visible=False)
 
 # -- Panel 3: run-length posterior heatmap --
 plot_run_length_heatmap(ax_rl, posteriors, dates_returns)
 draw_change_points(ax_rl, boundaries, dates_returns, draw_ci=False, alpha_line=0.5)
-mark_events(ax_rl, KNOWN_EVENTS, dates_returns, label_first=False)
+mark_events(ax_rl, KNOWN_EVENTS, dates_returns, label_first=False, show_labels=False)
 plt.setp(ax_rl.get_xticklabels(), visible=False)
 
 # -- Panel 4: expected run length with credible bands --
 plot_erl(ax_erl, erl, dates_returns)
 draw_change_points(ax_erl, boundaries, dates_returns)
-mark_events(ax_erl, KNOWN_EVENTS, dates_returns, label_first=False)
+mark_events(ax_erl, KNOWN_EVENTS, dates_returns, label_first=False, show_labels=False)
 ax_erl.set_xlabel("Date")
 ax_erl.legend(fontsize=8)
 format_xaxis(ax_erl)
@@ -172,7 +172,7 @@ fig.tight_layout()
 plt.show()
 ```
 
-    /tmp/ipykernel_32407/2279605825.py:51: UserWarning: This figure includes Axes that are not compatible with tight_layout, so results might be incorrect.
+    /tmp/ipykernel_26241/2422964825.py:51: UserWarning: This figure includes Axes that are not compatible with tight_layout, so results might be incorrect.
       fig.tight_layout()
 
 

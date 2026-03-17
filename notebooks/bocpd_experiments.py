@@ -223,14 +223,14 @@ plt.setp(ax_price.get_xticklabels(), visible=False)
 posteriors = bocpd_baseline["run_length_posterior"]
 plot_run_length_heatmap(ax_rl, posteriors, dates)
 draw_change_points(ax_rl, cps_baseline, dates, draw_ci=False, alpha_line=0.5)
-mark_events(ax_rl, KNOWN_EVENTS, dates, label_first=False)
+mark_events(ax_rl, KNOWN_EVENTS, dates, label_first=False, show_labels=False)
 plt.setp(ax_rl.get_xticklabels(), visible=False)
 
 # -- Panel 3: expected run length with credible bands --
 erl = bocpd_baseline["expected_run_length"]
 plot_erl(ax_erl, erl, dates)
 draw_change_points(ax_erl, cps_baseline, dates)
-mark_events(ax_erl, KNOWN_EVENTS, dates, label_first=False)
+mark_events(ax_erl, KNOWN_EVENTS, dates, label_first=False, show_labels=False)
 ax_erl.legend(fontsize=8)
 plt.setp(ax_erl.get_xticklabels(), visible=False)
 
@@ -244,7 +244,7 @@ ax_cpp.axhline(
     lw=1,
     label=f"Prior P(CP) = 1/λ = {1 / BASELINE_LAMBDA:.4f}",
 )
-mark_events(ax_cpp, KNOWN_EVENTS, dates, label_first=False)
+mark_events(ax_cpp, KNOWN_EVENTS, dates, label_first=False, show_labels=False)
 ax_cpp.set_ylabel("P(r_t=0 | x₁:t)")
 ax_cpp.set_xlabel("Date")
 ax_cpp.legend(fontsize=8)
@@ -337,7 +337,7 @@ for i, (lam, col) in enumerate(zip(LAMBDAS, purples, strict=False)):
     )
     ax.axhline(1.0, color=col, lw=0.6, ls=":", alpha=0.7)  # E[r] = λ line
     draw_change_points(ax, e2_cps[lam], dates, color=col, draw_ci=False)
-    mark_events(ax, KNOWN_EVENTS, dates, label_first=False)
+    mark_events(ax, KNOWN_EVENTS, dates, label_first=False, show_labels=False)
     ax.set_ylabel("E[r_t] / λ")
     ax.legend(fontsize=8, loc="upper right")
     ax.grid(True, alpha=0.2)
@@ -493,7 +493,7 @@ for i, ((name, result), col) in enumerate(
     erl = result["expected_run_length"]
     ax.plot(dates, erl, color=col, lw=1, label=f"{name}  ({len(e3_cps[name])} CPs)")
     draw_change_points(ax, e3_cps[name], dates, color=col, draw_ci=False)
-    mark_events(ax, KNOWN_EVENTS, dates, label_first=False)
+    mark_events(ax, KNOWN_EVENTS, dates, label_first=False, show_labels=False)
     ax.set_ylabel("E[run length]")
     ax.legend(fontsize=8, loc="upper right")
     ax.grid(True, alpha=0.25)
@@ -631,7 +631,7 @@ for key, label, col, lw in [
     ax.plot(dates, erl, color=col, lw=lw, label=label)
 
 draw_change_points(ax, e4_cps[base_key], dates, color=COLORS.cp, draw_ci=False)
-mark_events(ax, KNOWN_EVENTS, dates, label_first=False)
+mark_events(ax, KNOWN_EVENTS, dates, label_first=False, show_labels=False)
 ax.set_ylabel("Expected run length")
 ax.set_xlabel("Date")
 ax.set_title(
@@ -749,7 +749,7 @@ plt.setp(axes[0].get_xticklabels(), visible=False)
 for ax, (label, series, cps, col) in zip(axes[1:], method_data, strict=False):
     ax.plot(dates, series, color=col, lw=1, label=label)
     draw_change_points(ax, cps, dates, color=col, draw_ci=False, alpha_line=0.7)
-    mark_events(ax, KNOWN_EVENTS, dates, label_first=False)
+    mark_events(ax, KNOWN_EVENTS, dates, label_first=False, show_labels=False)
     ax.set_ylabel(label, fontsize=9)
     ax.legend(fontsize=8, loc="upper right")
     ax.grid(True, alpha=0.2)

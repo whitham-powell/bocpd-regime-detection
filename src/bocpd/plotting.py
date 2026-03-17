@@ -25,7 +25,7 @@ COLORS = SimpleNamespace(
     cp="#7F77DD",  # purple  — change point markers
     ci="#AFA9EC",  # light purple — credible interval bands
     erl="#534AB7",  # dark purple — ERL line
-    event="#444441",  # dark gray — known event markers
+    event="#C04040",  # muted red — known event markers
     price="#2C2C2A",  # near black — price line
     pred="#1D9E75",  # teal — predictive envelope
     ret="#888886",  # mid gray — log return scatter
@@ -67,9 +67,17 @@ def build_rl_matrix(posteriors, clip_lo=1e-6, clip_hi=1.0):
 
 
 def mark_events(
-    ax, events, dates_index, *, color=COLORS.event, alpha=0.3, lw=0.8, label_first=True
+    ax,
+    events,
+    dates_index,
+    *,
+    color=COLORS.event,
+    alpha=0.5,
+    lw=1.0,
+    label_first=True,
+    show_labels=True,
 ):
-    """Draw dotted vertical lines for a dict of ``{name: date_string}`` events.
+    """Draw dashed vertical lines for a dict of ``{name: date_string}`` events.
 
     Parameters
     ----------
@@ -81,11 +89,13 @@ def mark_events(
     color, alpha, lw : aesthetic overrides.
     label_first : bool
         If *True*, the first visible line gets ``label="Known events"``.
+    show_labels : bool
+        If *True*, place the event name as rotated text near the top of the axes.
     """
     import pandas as pd
 
     first = True
-    for _name, ds in events.items():
+    for name, ds in events.items():
         dt = pd.Timestamp(ds)
         if dates_index[0] <= dt <= dates_index[-1]:
             ax.axvline(
@@ -93,9 +103,21 @@ def mark_events(
                 color=color,
                 lw=lw,
                 alpha=alpha,
-                ls=":",
+                ls="--",
                 label="Known events" if (first and label_first) else None,
             )
+            if show_labels:
+                ax.text(
+                    dt,
+                    0.95,
+                    name,
+                    transform=ax.get_xaxis_transform(),
+                    rotation=90,
+                    fontsize=7,
+                    va="top",
+                    ha="right",
+                    color=color,
+                )
             first = False
 
 

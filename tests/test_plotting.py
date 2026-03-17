@@ -175,3 +175,26 @@ def test_colors_namespace():
     assert COLORS.cp == "#7F77DD"
     assert COLORS.erl == "#534AB7"
     assert COLORS.pred == "#1D9E75"
+    assert COLORS.event == "#C04040"
+
+
+def test_mark_events_with_labels(synthetic_data):
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots()
+    mark_events(ax, synthetic_data["events"], synthetic_data["dates"], show_labels=True)
+    texts = [t for t in ax.texts if t.get_text() in synthetic_data["events"]]
+    assert len(texts) > 0
+    plt.close(fig)
+
+
+def test_mark_events_without_labels(synthetic_data):
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots()
+    mark_events(
+        ax, synthetic_data["events"], synthetic_data["dates"], show_labels=False
+    )
+    texts = [t for t in ax.texts if t.get_text() in synthetic_data["events"]]
+    assert len(texts) == 0
+    plt.close(fig)
