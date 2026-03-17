@@ -327,6 +327,11 @@ class MultivariateNormalNIW(ExponentialFamilyModel):
         self.x_bar = np.zeros(dim)
         self.S = np.zeros((dim, dim))
 
+        # slogdet cache: avoids recomputing slogdet(Psi_n) when it was
+        # already computed as the hypothetical slogdet(Psi_n') last step.
+        self._cached_logdet = None  # (sign, logdet) or None
+        self._staged_logdet = None  # hypothetical, promoted on update()
+
     def sufficient_statistic(self, x: np.ndarray) -> dict:
         return {"x": np.asarray(x, dtype=float)}
 
@@ -345,9 +350,19 @@ class MultivariateNormalNIW(ExponentialFamilyModel):
         D = self.dim
         sign, logdet_Psi = np.linalg.slogdet(Psi)
         if sign <= 0:
-            # Psi should be positive definite; if not, return -inf
             return -np.inf
 
+        return (
+            multigammaln(nu / 2.0, D)
+            - (nu / 2.0) * logdet_Psi
+            - (D / 2.0) * np.log(kappa)
+        )
+
+    def _log_normalizer_with_logdet(self, kappa, nu, sign, logdet_Psi):
+        """Log normalizer when slogdet is already computed."""
+        if sign <= 0:
+            return -np.inf
+        D = self.dim
         return (
             multigammaln(nu / 2.0, D)
             - (nu / 2.0) * logdet_Psi
@@ -382,6 +397,41 @@ class MultivariateNormalNIW(ExponentialFamilyModel):
 
         return self._posterior_params(n_new, x_bar_new, S_new)
 
+    def log_predictive(self, x: np.ndarray) -> float:
+        """Predictive probability with slogdet caching.
+
+        Overrides the generic ExponentialFamilyModel.log_predictive to
+        reuse slogdet(Psi_n) from the previous timestep's hypothetical
+        computation, halving the number of slogdet calls.
+        """
+        current_params = self._get_params()
+        stat = self.sufficient_statistic(x)
+        new_params = self._updated_params(stat)
+
+        # Current log normalizer: use cache if available
+        if self._cached_logdet is not None:
+            sign_cur, logdet_cur = self._cached_logdet
+            log_Z_cur = self._log_normalizer_with_logdet(
+                current_params["kappa"],
+                current_params["nu"],
+                sign_cur,
+                logdet_cur,
+            )
+        else:
+            log_Z_cur = self.log_normalizer(**current_params)
+
+        # Hypothetical log normalizer: always fresh, stash for reuse
+        sign_new, logdet_new = np.linalg.slogdet(new_params["Psi"])
+        self._staged_logdet = (sign_new, logdet_new)
+        log_Z_new = self._log_normalizer_with_logdet(
+            new_params["kappa"],
+            new_params["nu"],
+            sign_new,
+            logdet_new,
+        )
+
+        return log_Z_new - log_Z_cur + self.log_base_measure(x)
+
     def _set_params(self, params: dict) -> None:
         """For NIW, we don't set params directly — we update sufficient stats.
 
@@ -399,6 +449,10 @@ class MultivariateNormalNIW(ExponentialFamilyModel):
         dx = x - self.x_bar
         self.x_bar = self.x_bar + dx / self.n
         self.S = self.S + ((self.n - 1) / self.n) * np.outer(dx, dx)
+        # Promote staged hypothetical logdet to current cache
+        if self._staged_logdet is not None:
+            self._cached_logdet = self._staged_logdet
+            self._staged_logdet = None
 
     def copy(self) -> MultivariateNormalNIW:
         """Efficient copy — avoid deepcopy of numpy arrays."""
@@ -411,6 +465,8 @@ class MultivariateNormalNIW(ExponentialFamilyModel):
         new.n = self.n
         new.x_bar = self.x_bar.copy()
         new.S = self.S.copy()
+        new._cached_logdet = self._cached_logdet
+        new._staged_logdet = self._staged_logdet
         return new
 
     def predictive_mean_var(self) -> tuple[np.ndarray, np.ndarray]:
@@ -488,3 +544,180 @@ class PoissonGamma(ExponentialFamilyModel):
         mean = self.alpha / self.beta
         var = self.alpha * (self.beta + 1.0) / (self.beta**2)
         return (mean, var)
+
+
+# =============================================================================
+# Batched NIW sufficient statistics (internal, not exported)
+# =============================================================================
+
+
+class _NIWBatch:
+    """Pre-allocated batched NIW sufficient statistics for vectorized BOCPD.
+
+    Stores (n, x_bar, S) arrays for up to `capacity` run lengths, with an
+    active count `R`. All posterior and predictive computations are vectorized
+    over the active run lengths — no Python loop required.
+    """
+
+    def __init__(self, probe: MultivariateNormalNIW, capacity: int):
+        D = probe.dim
+        self.D = D
+        self.capacity = capacity
+
+        # Prior hyperparameters (shared, immutable during run)
+        self.mu0 = probe.mu0
+        self.kappa0 = probe.kappa0
+        self.nu0 = probe.nu0
+        self.Psi0 = probe.Psi0
+
+        # Precompute slogdet of prior scale matrix and log base measure
+        sign0, logdet0 = np.linalg.slogdet(self.Psi0)
+        self._logdet_Psi0 = logdet0
+        self._sign_Psi0 = sign0
+        self._log_base = -0.5 * D * np.log(2 * np.pi)
+
+        # Pre-allocated sufficient statistics
+        self.n = np.zeros(capacity)  # (capacity,)
+        self.x_bar = np.zeros((capacity, D))  # (capacity, D)
+        self.S = np.zeros((capacity, D, D))  # (capacity, D, D)
+
+        # Active run-length count
+        self.R = 0
+
+        # slogdet cache: shape (R,) logdets for the current Psi_n
+        self._cached_logdet = None  # (R,) or None
+        self._staged_logdet = None  # (R,) staged from hypothetical
+
+    def prepend_fresh(self):
+        """Shift active region right, insert a fresh run at position 0."""
+        if self.capacity <= self.R:
+            # At capacity — drop the oldest run length
+            pass
+        else:
+            self.R += 1
+
+        # Shift existing entries right by 1
+        R = self.R
+        self.n[1:R] = self.n[: R - 1]
+        self.x_bar[1:R] = self.x_bar[: R - 1]
+        self.S[1:R] = self.S[: R - 1]
+
+        # Fresh run at position 0
+        self.n[0] = 0
+        self.x_bar[0] = 0.0
+        self.S[0] = 0.0
+
+        # Update cache: shift and insert prior logdet at position 0
+        if self._cached_logdet is not None:
+            new_cache = np.empty(R)
+            new_cache[0] = self._logdet_Psi0
+            new_cache[1:R] = self._cached_logdet[: R - 1]
+            self._cached_logdet = new_cache
+        else:
+            self._cached_logdet = None
+
+    def log_predictive_all(self, x: np.ndarray) -> np.ndarray:
+        """Vectorized log predictive for all active run lengths.
+
+        Parameters
+        ----------
+        x : np.ndarray, shape (D,)
+
+        Returns
+        -------
+        np.ndarray, shape (R,)
+        """
+        R, D = self.R, self.D
+        n = self.n[:R]  # (R,)
+        x_bar = self.x_bar[:R]  # (R, D)
+        S = self.S[:R]  # (R, D, D)
+
+        # Current posterior parameters (batched)
+        kappa_n = self.kappa0 + n  # (R,)
+        nu_n = self.nu0 + n  # (R,)
+
+        # Psi_n: when n=0, scale=0 and S=0 so Psi_n = Psi0 automatically
+        diff_cur = x_bar - self.mu0  # (R, D)
+        scale_cur = np.where(n > 0, self.kappa0 * n / kappa_n, 0.0)  # (R,)
+        Psi_n = (
+            self.Psi0
+            + S
+            + scale_cur[:, None, None] * (diff_cur[:, :, None] * diff_cur[:, None, :])
+        )  # (R, D, D)
+
+        # Hypothetical Welford update (batched, no mutation)
+        n_new = n + 1  # (R,)
+        dx = x - x_bar  # (R, D)
+        # x_bar_new = x_bar + dx / n_new[:, None]  # not needed for Psi
+        S_new = S + (n / n_new)[:, None, None] * (
+            dx[:, :, None] * dx[:, None, :]
+        )  # (R, D, D)
+
+        # Hypothetical posterior parameters
+        kappa_n_new = self.kappa0 + n_new  # (R,)
+        nu_n_new = self.nu0 + n_new  # (R,)
+        x_bar_new = x_bar + dx / n_new[:, None]  # (R, D)
+        diff_new = x_bar_new - self.mu0  # (R, D)
+        scale_new = self.kappa0 * n_new / kappa_n_new  # (R,) — n_new >= 1 always
+        Psi_n_new = (
+            self.Psi0
+            + S_new
+            + scale_new[:, None, None] * (diff_new[:, :, None] * diff_new[:, None, :])
+        )  # (R, D, D)
+
+        # slogdet: use cache for current, compute fresh for hypothetical
+        if self._cached_logdet is not None and len(self._cached_logdet) >= R:
+            logdet_cur = self._cached_logdet[:R]
+        else:
+            signs_cur, logdet_cur = np.linalg.slogdet(Psi_n)
+            # Guard: where sign <= 0, logdet doesn't matter (handled below)
+            logdet_cur = np.where(signs_cur > 0, logdet_cur, 0.0)
+
+        signs_new, logdet_new = np.linalg.slogdet(Psi_n_new)  # 1 batched call
+        self._staged_logdet = np.where(signs_new > 0, logdet_new, 0.0)
+
+        # Log normalizer ratio
+        log_Z_cur = (
+            multigammaln(nu_n / 2.0, D)
+            - (nu_n / 2.0) * logdet_cur
+            - (D / 2.0) * np.log(kappa_n)
+        )
+        log_Z_new = (
+            multigammaln(nu_n_new / 2.0, D)
+            - (nu_n_new / 2.0) * logdet_new
+            - (D / 2.0) * np.log(kappa_n_new)
+        )
+
+        result = log_Z_new - log_Z_cur + self._log_base
+
+        # Guard: where hypothetical sign <= 0, result is -inf
+        result = np.where(signs_new > 0, result, -np.inf)
+
+        return result
+
+    def update_all(self, x: np.ndarray):
+        """Vectorized Welford update on all active run lengths."""
+        R = self.R
+        n = self.n[:R]
+        x_bar = self.x_bar[:R]
+        S = self.S[:R]
+
+        n_new = n + 1
+        dx = x - x_bar
+        x_bar_new = x_bar + dx / n_new[:, None]
+        S_new = S + (n / n_new)[:, None, None] * (dx[:, :, None] * dx[:, None, :])
+
+        self.n[:R] = n_new
+        self.x_bar[:R] = x_bar_new
+        self.S[:R] = S_new
+
+        # Promote staged logdet to current cache
+        if self._staged_logdet is not None:
+            self._cached_logdet = self._staged_logdet
+            self._staged_logdet = None
+
+    def truncate(self, n: int):
+        """Reduce active run lengths to at most n."""
+        self.R = min(self.R, n)
+        if self._cached_logdet is not None:
+            self._cached_logdet = self._cached_logdet[: self.R]

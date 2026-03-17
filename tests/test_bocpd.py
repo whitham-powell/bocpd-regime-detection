@@ -292,6 +292,64 @@ def test_predictive_output_multivariate():
     assert np.all(np.isnan(pv)), "Expected all NaN for multivariate predictive_var"
 
 
+def test_vectorized_matches_sequential():
+    """Vectorized NIW path produces identical results to sequential path."""
+    np.random.seed(123)
+    dim = 3
+    T = 150
+    data = np.vstack(
+        [
+            np.random.multivariate_normal([0, 0, 0], np.eye(dim), 80),
+            np.random.multivariate_normal([3, -2, 1], 0.5 * np.eye(dim), 70),
+        ]
+    )
+    assert data.shape == (T, dim)
+
+    factory = lambda: MultivariateNormalNIW(  # noqa: E731
+        dim=dim, kappa0=0.1, nu0=float(dim) + 1, Psi0=np.eye(dim)
+    )
+    hazard = ConstantHazard(lam=80)
+    r_max = 100
+
+    detector = BOCPD(model_factory=factory, hazard_fn=hazard, r_max=r_max)
+
+    # Run both paths explicitly
+    result_seq = detector._run_sequential(data)
+    result_vec = detector._run_vectorized(data, factory())
+
+    # Compare all numeric arrays
+    np.testing.assert_allclose(
+        result_seq["change_point_prob"],
+        result_vec["change_point_prob"],
+        atol=1e-10,
+        err_msg="change_point_prob mismatch",
+    )
+    np.testing.assert_array_equal(
+        result_seq["map_run_length"],
+        result_vec["map_run_length"],
+        err_msg="map_run_length mismatch",
+    )
+    np.testing.assert_allclose(
+        result_seq["expected_run_length"],
+        result_vec["expected_run_length"],
+        atol=1e-10,
+        err_msg="expected_run_length mismatch",
+    )
+
+    # Compare run_length_posterior element by element
+    for t in range(T):
+        np.testing.assert_allclose(
+            result_seq["run_length_posterior"][t],
+            result_vec["run_length_posterior"][t],
+            atol=1e-10,
+            err_msg=f"run_length_posterior mismatch at t={t}",
+        )
+
+    # Both should have all-NaN predictive output for multivariate
+    assert np.all(np.isnan(result_seq["predictive_mean"]))
+    assert np.all(np.isnan(result_vec["predictive_mean"]))
+
+
 def test_no_change():
     np.random.seed(42)
     data = np.random.normal(0, 1, 200)

@@ -21,6 +21,7 @@ from __future__ import annotations
 import numpy as np
 
 from .hazard import ConstantHazard
+from .observation_model import MultivariateNormalNIW, _NIWBatch
 
 
 class BOCPD:
@@ -89,6 +90,18 @@ class BOCPD:
             'predictive_var' : np.ndarray, shape (T,)
                 One-step-ahead predictive variance Var[x_t | x_{1:t-1}],
                 averaged over run lengths (includes mixture variance).
+        """
+        probe = self.model_factory()
+        if isinstance(probe, MultivariateNormalNIW) and self.r_max is not None:
+            return self._run_vectorized(data, probe)
+        return self._run_sequential(data)
+
+    def _run_sequential(self, data: np.ndarray) -> dict:
+        """Original sequential implementation close to Adams & MacKay (2007).
+
+        Used for NIG, PoissonGamma, custom models, and when r_max is None.
+        Benefits from Step 1 slogdet caching in MultivariateNormalNIW
+        automatically.
         """
         T = len(data)
 
@@ -204,6 +217,91 @@ class BOCPD:
                 new_models.append(models[r])
 
             models = new_models
+            joint = new_joint
+
+        return {
+            "run_length_posterior": run_length_posterior,
+            "change_point_prob": change_point_prob,
+            "map_run_length": map_run_length,
+            "expected_run_length": expected_run_length,
+            "predictive_mean": predictive_mean,
+            "predictive_var": predictive_var,
+        }
+
+    def _run_vectorized(self, data: np.ndarray, probe: MultivariateNormalNIW) -> dict:
+        """Vectorized implementation for MultivariateNormalNIW with r_max.
+
+        Same algorithm as _run_sequential, same output dict. All run-length
+        computations are batched — no Python loop over run lengths.
+        Predictive mean/var are left as NaN (multivariate model).
+        """
+        T = len(data)
+
+        # --- Storage ---
+        run_length_posterior = []
+        change_point_prob = np.zeros(T)
+        map_run_length = np.zeros(T, dtype=int)
+        expected_run_length = np.zeros(T)
+        predictive_mean = np.full(T, np.nan)
+        predictive_var = np.full(T, np.nan)
+
+        # --- Initialization ---
+        joint = np.array([1.0])  # P(r_0 = 0) = 1
+        batch = _NIWBatch(probe, capacity=self.r_max)
+        batch.prepend_fresh()  # R=1, one fresh run at position 0
+
+        # --- Main loop ---
+        for t in range(T):
+            x = data[t]
+            n_run_lengths = len(joint)
+
+            # Step 0: Predictive envelope skipped (multivariate)
+
+            # Step 1: Evaluate predictive probability under each run length
+            log_pred = batch.log_predictive_all(x)
+
+            # Step 2: Compute growth probabilities
+            run_lengths = np.arange(n_run_lengths)
+            H = self.hazard_fn(run_lengths)
+            pred = np.exp(log_pred)
+            growth = joint * pred * (1.0 - H)
+
+            # Step 3: Compute change point probability
+            changepoint = np.sum(joint * pred * H)
+
+            # Step 4: Assemble new joint distribution
+            new_joint = np.empty(n_run_lengths + 1)
+            new_joint[0] = changepoint
+            new_joint[1:] = growth
+
+            # Step 5: Normalize to get posterior
+            evidence = np.sum(new_joint)
+            if evidence > 0:
+                new_joint /= evidence
+            else:
+                new_joint = np.ones_like(new_joint) / len(new_joint)
+
+            # Step 6: Truncation
+            if len(new_joint) > self.r_max:
+                new_joint = new_joint[: self.r_max]
+                total = np.sum(new_joint)
+                if total > 0:
+                    new_joint /= total
+
+            # Step 7: Store results
+            run_length_posterior.append(new_joint.copy())
+            change_point_prob[t] = new_joint[0]
+            map_run_length[t] = np.argmax(new_joint)
+            expected_run_length[t] = np.sum(np.arange(len(new_joint)) * new_joint)
+
+            # Step 8: Update batch sufficient statistics
+            # Truncate to surviving run lengths, update, prepend fresh
+            n_survive = len(new_joint) - 1
+            batch.truncate(min(n_survive, batch.R))
+            batch.update_all(x)
+            batch.prepend_fresh()
+            # batch.R == len(new_joint) ✓
+
             joint = new_joint
 
         return {
