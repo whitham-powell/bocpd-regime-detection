@@ -197,7 +197,7 @@ for cp in cps_baseline:
     )
 ```
 
-    Baseline BOCPD: 1.06s
+    Baseline BOCPD: 1.00s
     Detected 11 change points:
       2020-02-24  90% CI [2020-02-20 -- 2020-02-28]  (8d wide)  severity=0.97
       2020-05-14  90% CI [2020-04-06 -- 2020-04-15]  (9d wide)  severity=0.86
@@ -273,7 +273,7 @@ fig.tight_layout()
 plt.show()
 ```
 
-    /tmp/ipykernel_12993/1939338632.py:56: UserWarning: This figure includes Axes that are not compatible with tight_layout, so results might be incorrect.
+    /tmp/ipykernel_8860/1939338632.py:56: UserWarning: This figure includes Axes that are not compatible with tight_layout, so results might be incorrect.
       fig.tight_layout()
 
 
@@ -342,19 +342,19 @@ for lam in LAMBDAS:
     λ sweep:
 
 
-      λ=  50  change_points= 11  (1.00s)
+      λ=  50  change_points= 11  (0.99s)
 
 
-      λ= 100  change_points= 11  (0.98s)
+      λ= 100  change_points= 11  (0.99s)
 
 
-      λ= 200  change_points= 11  (0.99s)
+      λ= 200  change_points= 11  (0.97s)
 
 
-      λ= 400  change_points= 10  (0.97s)
+      λ= 400  change_points= 10  (1.04s)
 
 
-      λ= 800  change_points= 12  (1.01s)
+      λ= 800  change_points= 12  (0.98s)
 
 
 
@@ -470,7 +470,7 @@ The dotted horizontal line marks E[r_t] = λ, where the run is at its
 prior-expected age.
 
 The boundary counts are nearly identical across a 16x range of λ
-(10–12 CPs for λ ∈ [50, 800]). In theory we would expect smaller λ
+(10-12 CPs for λ ∈ [50, 800]). In theory we would expect smaller λ
 to produce more detections, since the prior is more permissive toward
 short regimes. The fact that this does not happen here suggests the
 distributional shifts in this data set are strong enough to overwhelm
@@ -538,13 +538,13 @@ for name, hazard in hazard_configs.items():
     Hazard comparison:
 
 
-      Constant  (λ=200)                    CPs= 11  (0.95s)
+      Constant  (λ=200)                    CPs= 11  (1.03s)
 
 
-      Increasing (scale=200)               CPs= 12  (1.00s)
+      Increasing (scale=200)               CPs= 12  (1.04s)
 
 
-      Decreasing (sticky)                  CPs=  1  (1.03s)
+      Decreasing (sticky)                  CPs=  1  (1.06s)
 
 
 
@@ -594,7 +594,7 @@ fig.tight_layout()
 plt.show()
 ```
 
-    /tmp/ipykernel_12993/3876711818.py:42: UserWarning: This figure includes Axes that are not compatible with tight_layout, so results might be incorrect.
+    /tmp/ipykernel_8860/3876711818.py:42: UserWarning: This figure includes Axes that are not compatible with tight_layout, so results might be incorrect.
       fig.tight_layout()
 
 
@@ -678,31 +678,31 @@ for kappa0 in KAPPA0_VALS:
     Prior sensitivity grid:
 
 
-      κ₀=  0.1  ν₀=  7  CPs= 11  (0.99s)
+      κ₀=  0.1  ν₀=  7  CPs= 11  (1.01s)
 
 
-      κ₀=  0.1  ν₀= 15  CPs= 12  (1.07s)
+      κ₀=  0.1  ν₀= 15  CPs= 12  (1.02s)
 
 
-      κ₀=  0.1  ν₀= 55  CPs= 10  (1.02s)
+      κ₀=  0.1  ν₀= 55  CPs= 10  (1.01s)
 
 
-      κ₀=  1.0  ν₀=  7  CPs= 11  (0.98s)
+      κ₀=  1.0  ν₀=  7  CPs= 11  (1.01s)
 
 
       κ₀=  1.0  ν₀= 15  CPs= 10  (1.03s)
 
 
-      κ₀=  1.0  ν₀= 55  CPs=  7  (1.00s)
+      κ₀=  1.0  ν₀= 55  CPs=  7  (1.03s)
 
 
-      κ₀= 10.0  ν₀=  7  CPs= 13  (1.03s)
+      κ₀= 10.0  ν₀=  7  CPs= 13  (0.99s)
 
 
-      κ₀= 10.0  ν₀= 15  CPs= 10  (0.97s)
+      κ₀= 10.0  ν₀= 15  CPs= 10  (0.99s)
 
 
-      κ₀= 10.0  ν₀= 55  CPs=  6  (1.10s)
+      κ₀= 10.0  ν₀= 55  CPs=  6  (1.01s)
 
 
 
@@ -791,12 +791,12 @@ plt.show()
 ### Reading experiment 4
 
 The heatmap shows a clear gradient along ν₀: boundary counts drop
-from 11–13 at ν₀=7 (weak prior) to 6–10 at ν₀=55 (strong prior) —
+from 11-13 at ν₀=7 (weak prior) to 6-10 at ν₀=55 (strong prior) —
 more than a 2x difference. This is expected: a stronger covariance
 prior makes the predictive distribution less responsive to new data,
 so the model requires larger distributional shifts before declaring
 a change. The κ₀ axis has a weaker effect, with counts varying by
-only 1–3 across each row.
+only 1-3 across each row.
 
 This means the choice of ν₀ matters substantively for this data set
 and should be reported alongside results. The weak-prior baseline
@@ -995,7 +995,7 @@ print(f"{'Exp 5 — Posterior mass extraction':<40} {len(cps_mass):>5}")
     =================================================================
     Experiment                                 CPs      Time
     -----------------------------------------------------------------
-    Exp 1 — Baseline (λ=200, Constant, D=5)     11     1.06s
+    Exp 1 — Baseline (λ=200, Constant, D=5)     11     1.00s
     Exp 2 — λ=50                                11
     Exp 2 — λ=100                               11
     Exp 2 — λ=200                               11
