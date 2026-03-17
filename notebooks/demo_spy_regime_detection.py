@@ -20,14 +20,21 @@
 # daily log returns. We use a univariate Normal-Inverse-Gamma model
 # and constant hazard function.
 #
+# This notebook showcases the **predictive envelope** — the mixture
+# predictive mean and standard deviation computed from the run-length
+# posterior — which is available for univariate models (NIG, PoissonGamma)
+# but not for the multivariate NIW used in the experiments notebook.
+#
 # Reference: Adams & MacKay (2007), *Bayesian Online Changepoint Detection*.
 
 # %%
+import matplotlib.colors as mcolors
+import matplotlib.dates as mdates
+import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
 import numpy as np
-import seaborn as sns
+import pandas as pd
 from finfeatures.sources import YFinanceSource
-from matplotlib.colors import LogNorm
 
 from bocpd import (
     BOCPD,
@@ -36,7 +43,62 @@ from bocpd import (
     extract_change_points_with_bounds,
 )
 
-sns.set_theme(style="whitegrid")
+# Colour palette — consistent with experiments notebook
+C_CP = "#7F77DD"  # purple  — change point markers
+C_CI = "#AFA9EC"  # light purple — credible interval bands
+C_ERL = "#534AB7"  # dark purple — ERL line
+C_EVENT = "#444441"  # dark gray — known event markers
+C_PRICE = "#2C2C2A"  # near black — price line
+C_PRED = "#1D9E75"  # teal — predictive envelope
+C_RETURN = "#888886"  # mid gray — log return scatter
+
+KNOWN_EVENTS = {
+    "COVID crash": "2020-02-19",
+    "COVID bottom": "2020-03-23",
+    "2022 drawdown": "2022-01-03",
+    "2022 bottom": "2022-10-13",
+    "2023 rally": "2023-01-03",
+}
+
+
+def mark_events(ax, dates_index, alpha=0.3, label_first=True):
+    """Draw dotted vertical lines for known market events."""
+    first = True
+    for _name, ds in KNOWN_EVENTS.items():
+        dt = pd.Timestamp(ds)
+        if dates_index[0] <= dt <= dates_index[-1]:
+            ax.axvline(
+                dt,
+                color=C_EVENT,
+                lw=0.8,
+                alpha=alpha,
+                ls=":",
+                label="Known events" if (first and label_first) else None,
+            )
+            first = False
+
+
+def format_xaxis(ax):
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
+    ax.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
+    plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
+
+
+def draw_change_points(ax, cps, dates_index, color=C_CP, alpha_line=0.8, draw_ci=True):
+    """Draw change point verticals and optional credible interval bands."""
+    for cp in cps:
+        dt = dates_index[cp["index"]]
+        ax.axvline(dt, color=color, lw=1.8, alpha=alpha_line)
+        if draw_ci:
+            ax.axvspan(
+                dates_index[cp["lower"]],
+                dates_index[cp["upper"]],
+                alpha=0.08,
+                color=color,
+            )
+
+
+print("Imports OK")
 
 # %% [markdown]
 # ## Fetch SPY data
@@ -52,7 +114,7 @@ log_returns = np.diff(np.log(close))
 dates_returns = dates[1:]
 
 print(f"SPY observations: {len(log_returns)} trading days")
-print(f"Date range: {dates_returns[0]} to {dates_returns[-1]}")
+print(f"Date range: {dates_returns[0].date()} to {dates_returns[-1].date()}")
 
 # %% [markdown]
 # ## Run BOCPD
@@ -71,118 +133,137 @@ boundaries = extract_change_points_with_bounds(result, credible_mass=0.90, min_g
 print(f"Detected {len(boundaries)} change points:")
 for b in boundaries:
     idx = b["index"]
+    lo = dates_returns[b["lower"]]
+    hi = dates_returns[b["upper"]]
+    ci_width = (hi - lo).days
     print(
-        f"  t={idx:4d} ({dates_returns[idx].strftime('%Y-%m-%d')})  "
-        f"90% CI: [{b['lower']}, {b['upper']}]  "
-        f"severity={b['severity']:.2f}"
+        f"  {dates_returns[idx].strftime('%Y-%m-%d')}  "
+        f"90% CI [{lo.strftime('%Y-%m-%d')} -- {hi.strftime('%Y-%m-%d')}]  "
+        f"({ci_width}d wide)  severity={b['severity']:.2f}"
     )
 
 # %% [markdown]
-# ## Log returns with detected change points
+# ## Overview: price, predictive envelope, heatmap, and ERL
+#
+# Four-panel figure combining the key outputs. The predictive envelope
+# (panel 2) is the unique feature of univariate models — it shows the
+# one-step-ahead mixture predictive mean $\pm$ one standard deviation,
+# weighted by the run-length posterior. The envelope widens after change
+# points as the fresh prior contributes high uncertainty, then tightens
+# as within-regime data accumulates.
 
 # %%
-pred_mean = result["predictive_mean"]
-pred_std = np.sqrt(result["predictive_var"])
-
-fig, ax = plt.subplots(figsize=(14, 4))
-ax.plot(dates_returns, log_returns, color="0.4", linewidth=0.5)
-ax.plot(dates_returns, pred_mean, color="black", linewidth=1, label="Predictive mean")
-ax.plot(
-    dates_returns, pred_mean + pred_std, color="black", linewidth=0.7, linestyle=":"
-)
-ax.plot(
-    dates_returns, pred_mean - pred_std, color="black", linewidth=0.7, linestyle=":"
-)
-
-for b in boundaries:
-    idx = b["index"]
-    ax.axvline(dates_returns[idx], color="red", alpha=0.6, linewidth=1, linestyle="--")
-
-ax.legend(fontsize=8)
-ax.set_xlabel("Date")
-ax.set_ylabel("Log return")
-ax.set_title("SPY daily log returns with predictive envelope and change points")
-fig.tight_layout()
-plt.show()
-
-# %% [markdown]
-# ## Run-length posterior heatmap
-
-# %%
+T = len(log_returns)
 posteriors = result["run_length_posterior"]
-T = len(posteriors)
 max_rl = max(len(p) for p in posteriors)
 rl_matrix = np.zeros((max_rl, T))
 for t, p in enumerate(posteriors):
     rl_matrix[: len(p), t] = p
+rl_matrix = np.clip(rl_matrix, 1e-6, 1.0)
 
-# Clip floor to avoid log(0); match Adams & MacKay Fig. 2-4 style
-rl_matrix = np.clip(rl_matrix, 1e-4, 1.0)
-
-fig, ax = plt.subplots(figsize=(14, 5))
-im = ax.imshow(
-    rl_matrix,
-    aspect="auto",
-    origin="lower",
-    cmap="gray_r",
-    norm=LogNorm(vmin=1e-4, vmax=1.0),
-    interpolation="none",
-)
-fig.colorbar(im, ax=ax, label="$P(r_t \\mid x_{1:t})$", shrink=0.8)
-ax.set_xlabel("Time (trading days)")
-ax.set_ylabel("Run length")
-ax.set_title("Run-length posterior $P(r_t \\mid x_{1:t})$")
-fig.tight_layout()
-plt.show()
-
-# %% [markdown]
-# ## Expected run length with change points
-
-# %%
+pred_mean = result["predictive_mean"]
+pred_std = np.sqrt(result["predictive_var"])
 erl = result["expected_run_length"]
 
-fig, ax = plt.subplots(figsize=(14, 4))
-ax.plot(dates_returns, erl, color="steelblue", linewidth=0.8, label="E[r_t]")
+fig = plt.figure(figsize=(14, 14))
+gs = gridspec.GridSpec(4, 1, figure=fig, height_ratios=[1.0, 1.2, 2, 1], hspace=0.07)
 
-for b in boundaries:
-    idx = b["index"]
-    ax.axvline(dates_returns[idx], color="red", alpha=0.7, linewidth=1.2)
-    ax.axvspan(
-        dates_returns[b["lower"]],
-        dates_returns[b["upper"]],
-        alpha=0.15,
-        color="red",
-    )
+ax_price = fig.add_subplot(gs[0])
+ax_pred = fig.add_subplot(gs[1], sharex=ax_price)
+ax_rl = fig.add_subplot(gs[2], sharex=ax_price)
+ax_erl = fig.add_subplot(gs[3], sharex=ax_price)
 
-ax.set_xlabel("Date")
-ax.set_ylabel("Expected run length")
-ax.set_title("Expected run length with detected change points (90% CI bands)")
-ax.legend()
+# -- Panel 1: price --
+ax_price.plot(dates, close, color=C_PRICE, lw=0.8, label="SPY close")
+draw_change_points(ax_price, boundaries, dates_returns)
+mark_events(ax_price, dates_returns)
+ax_price.set_ylabel("Price ($)")
+ax_price.set_title(
+    "SPY regime detection — UnivariateNormalNIG  (λ=100, κ₀=0.1)",
+    fontsize=11,
+    fontweight="bold",
+)
+ax_price.legend(fontsize=8, loc="upper left")
+ax_price.grid(True, alpha=0.25)
+plt.setp(ax_price.get_xticklabels(), visible=False)
+
+# -- Panel 2: predictive envelope --
+ax_pred.plot(
+    dates_returns, log_returns, color=C_RETURN, lw=0.3, alpha=0.6, label="Log return"
+)
+ax_pred.plot(dates_returns, pred_mean, color=C_PRED, lw=1, label="Predictive mean")
+ax_pred.fill_between(
+    dates_returns,
+    pred_mean - pred_std,
+    pred_mean + pred_std,
+    color=C_PRED,
+    alpha=0.15,
+    label="±1 std",
+)
+draw_change_points(ax_pred, boundaries, dates_returns, draw_ci=False, alpha_line=0.5)
+mark_events(ax_pred, dates_returns, label_first=False)
+ax_pred.set_ylabel("Log return")
+ax_pred.legend(fontsize=8, loc="upper right")
+ax_pred.grid(True, alpha=0.25)
+plt.setp(ax_pred.get_xticklabels(), visible=False)
+
+# -- Panel 3: run-length posterior heatmap --
+date_edges = np.append(dates_returns, dates_returns[-1] + pd.Timedelta(days=1))
+im = ax_rl.pcolormesh(
+    date_edges,
+    np.arange(max_rl + 1),
+    rl_matrix,
+    cmap="gray_r",
+    norm=mcolors.LogNorm(vmin=1e-5, vmax=1.0),
+    shading="flat",
+    rasterized=True,
+)
+ax_rl.set_ylim(0, min(500, max_rl))
+draw_change_points(ax_rl, boundaries, dates_returns, draw_ci=False, alpha_line=0.5)
+mark_events(ax_rl, dates_returns, label_first=False)
+ax_rl.set_ylabel("Run length (days)")
+fig.colorbar(im, ax=ax_rl, label=r"$P(r_t \mid x_{1:t})$", shrink=0.8, pad=0.01)
+plt.setp(ax_rl.get_xticklabels(), visible=False)
+
+# -- Panel 4: expected run length with credible bands --
+ax_erl.plot(dates_returns, erl, color=C_ERL, lw=1, label="E[r_t]")
+draw_change_points(ax_erl, boundaries, dates_returns)
+mark_events(ax_erl, dates_returns, label_first=False)
+ax_erl.set_ylabel("Expected run length")
+ax_erl.set_xlabel("Date")
+ax_erl.legend(fontsize=8)
+ax_erl.grid(True, alpha=0.25)
+format_xaxis(ax_erl)
+
 fig.tight_layout()
 plt.show()
 
 # %% [markdown]
-# ## SPY price with regime boundaries
-
-# %%
-fig, ax = plt.subplots(figsize=(14, 5))
-ax.plot(dates, close, color="black", linewidth=0.7, label="SPY close")
-
-for b in boundaries:
-    idx = b["index"]
-    ax.axvline(
-        dates_returns[idx],
-        color="red",
-        alpha=0.6,
-        linewidth=1.2,
-        linestyle="--",
-    )
-
-ax.set_xlabel("Date")
-ax.set_ylabel("Price ($)")
-ax.set_title("SPY daily close with BOCPD regime boundaries")
-ax.legend()
-fig.tight_layout()
-plt.show()
+# ### Reading this figure
+#
+# **Price** (top): detected change points align with major market turning
+# points — COVID crash, recovery, 2022 drawdown, and subsequent rally.
+# The credible interval bands (shaded purple) show uncertainty about
+# the exact transition date.
+#
+# **Predictive envelope** (second): the mixture predictive distribution
+# adapts in real time. After a change point, the envelope widens as the
+# fresh NIG prior (with infinite Student-t variance at α₀=1) enters the
+# mixture. As within-regime observations accumulate, alpha grows, the
+# Student-t degrees of freedom increase, and the envelope tightens.
+# The envelope is narrow during calm periods and blows out during volatile
+# regimes — this is the model correctly tracking regime-specific variance.
+#
+# **Run-length posterior** (third): the primary output. Each column is
+# the full posterior over run lengths at that time step. Before a change
+# point, most mass sits on long run lengths — visible as a bright
+# diagonal band growing from the bottom-left. At a change point the
+# posterior collapses: mass drains from long run lengths and concentrates
+# near zero, appearing as a vertical bright stripe.
+#
+# **Expected run length** (bottom): a scalar summary of the posterior.
+# Sharp drops correspond to detected change points. The 90% credible
+# interval bands are derived from aggregating retrospective
+# change-time distributions across nearby time steps.
 
 # %%
