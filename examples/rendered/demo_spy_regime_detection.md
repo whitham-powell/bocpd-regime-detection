@@ -172,7 +172,7 @@ fig.tight_layout()
 plt.show()
 ```
 
-    /tmp/ipykernel_26241/2422964825.py:51: UserWarning: This figure includes Axes that are not compatible with tight_layout, so results might be incorrect.
+    /tmp/ipykernel_20793/2422964825.py:51: UserWarning: This figure includes Axes that are not compatible with tight_layout, so results might be incorrect.
       fig.tight_layout()
 
 

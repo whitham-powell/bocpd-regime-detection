@@ -197,7 +197,7 @@ for cp in cps_baseline:
     )
 ```
 
-    Baseline BOCPD: 1.01s
+    Baseline BOCPD: 1.06s
     Detected 11 change points:
       2020-02-24  90% CI [2020-02-20 -- 2020-02-28]  (8d wide)  severity=0.97
       2020-05-14  90% CI [2020-04-06 -- 2020-04-15]  (9d wide)  severity=0.86
@@ -273,7 +273,7 @@ fig.tight_layout()
 plt.show()
 ```
 
-    /tmp/ipykernel_18136/1939338632.py:56: UserWarning: This figure includes Axes that are not compatible with tight_layout, so results might be incorrect.
+    /tmp/ipykernel_12993/1939338632.py:56: UserWarning: This figure includes Axes that are not compatible with tight_layout, so results might be incorrect.
       fig.tight_layout()
 
 
@@ -293,10 +293,11 @@ drains from the long run lengths and concentrates near zero, which
 appears as a vertical bright stripe cutting through the heatmap and a
 sharp drop in the ERL panel below.
 
-The change-point probability panel (bottom) confirms that with constant
-hazard λ=200 this quantity is always near 1/λ regardless of the data —
-a known property of the constant hazard case. The signal is in the ERL
-and the heatmap, not in P(r_t=0).
+The change-point probability panel (bottom) is essentially flat near
+1/λ throughout. In theory, P(r_t=0) under constant hazard is always
+close to 1/λ regardless of the data — this panel confirms that
+property but provides little additional diagnostic value. The useful
+signal lives in the ERL and heatmap panels, not in P(r_t=0).
 
 ---
 ## Experiment 2: λ sweep
@@ -341,19 +342,19 @@ for lam in LAMBDAS:
     λ sweep:
 
 
-      λ=  50  change_points= 11  (1.04s)
+      λ=  50  change_points= 11  (1.00s)
 
 
-      λ= 100  change_points= 11  (1.04s)
+      λ= 100  change_points= 11  (0.98s)
 
 
-      λ= 200  change_points= 11  (1.04s)
+      λ= 200  change_points= 11  (0.99s)
 
 
-      λ= 400  change_points= 10  (1.07s)
+      λ= 400  change_points= 10  (0.97s)
 
 
-      λ= 800  change_points= 12  (1.05s)
+      λ= 800  change_points= 12  (1.01s)
 
 
 
@@ -468,11 +469,20 @@ regardless of the parameter — this makes the panels visually comparable.
 The dotted horizontal line marks E[r_t] = λ, where the run is at its
 prior-expected age.
 
-The summary figure shows two things: boundary count rises as λ falls
-(the model is more willing to declare a new regime), but the peak ERL
-drop fraction is relatively stable across λ. The strongest distributional
-shifts — COVID crash, 2022 drawdown — are detected at every λ value.
-λ mainly controls how many *weaker* shifts are flagged.
+The boundary counts are nearly identical across a 16x range of λ
+(10–12 CPs for λ ∈ [50, 800]). In theory we would expect smaller λ
+to produce more detections, since the prior is more permissive toward
+short regimes. The fact that this does not happen here suggests the
+distributional shifts in this data set are strong enough to overwhelm
+the prior — the model detects roughly the same boundaries regardless
+of λ. The summary plots confirm this: the peak ERL drop fraction
+varies by less than 0.01% across all five λ values.
+
+This is a useful result in itself — it means the specific choice of
+λ has little practical impact on this data — but it also means this
+experiment does not demonstrate the sensitivity that λ theoretically
+controls. A data set with subtler regime changes would likely show
+more separation between λ values.
 
 ---
 ## Experiment 3: Hazard function comparison
@@ -528,13 +538,13 @@ for name, hazard in hazard_configs.items():
     Hazard comparison:
 
 
-      Constant  (λ=200)                    CPs= 11  (1.03s)
+      Constant  (λ=200)                    CPs= 11  (0.95s)
 
 
-      Increasing (scale=200)               CPs= 12  (1.11s)
+      Increasing (scale=200)               CPs= 12  (1.00s)
 
 
-      Decreasing (sticky)                  CPs=  1  (1.07s)
+      Decreasing (sticky)                  CPs=  1  (1.03s)
 
 
 
@@ -584,7 +594,7 @@ fig.tight_layout()
 plt.show()
 ```
 
-    /tmp/ipykernel_18136/3876711818.py:42: UserWarning: This figure includes Axes that are not compatible with tight_layout, so results might be incorrect.
+    /tmp/ipykernel_12993/3876711818.py:42: UserWarning: This figure includes Axes that are not compatible with tight_layout, so results might be incorrect.
       fig.tight_layout()
 
 
@@ -602,11 +612,18 @@ is flat: a 10-day-old regime is as likely to end as a 300-day-old one.
 Increasing hazard rises: old regimes are fragile. Decreasing hazard
 falls: old regimes are sticky.
 
-The key question is whether the hazard shape changes *which* boundaries
-are detected or only *how many*. If the three ERL panels mark the same
-events at different frequencies, the major detections are robust to
-hazard choice. If the increasing and decreasing hazards detect
-structurally different boundaries, hazard shape matters substantively.
+The results split sharply: Constant and Increasing produce similar
+counts (11 and 12 CPs), while Decreasing detects only 1. The
+Decreasing hazard's "sticky regime" prior makes it extremely reluctant
+to declare a change once a regime is established — effectively
+suppressing all but the single strongest shift.
+
+Constant and Increasing behave similarly here because, despite their
+different shapes, both assign non-trivial hazard at the run lengths
+present in this data. The key takeaway is that hazard shape can
+matter dramatically — not in a gradual way, but as a near-binary
+switch between detecting most events (Constant, Increasing) and
+detecting almost none (Decreasing).
 
 ---
 ## Experiment 4: Prior sensitivity
@@ -661,31 +678,31 @@ for kappa0 in KAPPA0_VALS:
     Prior sensitivity grid:
 
 
-      κ₀=  0.1  ν₀=  7  CPs= 11  (1.04s)
+      κ₀=  0.1  ν₀=  7  CPs= 11  (0.99s)
 
 
-      κ₀=  0.1  ν₀= 15  CPs= 12  (1.10s)
+      κ₀=  0.1  ν₀= 15  CPs= 12  (1.07s)
 
 
-      κ₀=  0.1  ν₀= 55  CPs= 10  (1.04s)
+      κ₀=  0.1  ν₀= 55  CPs= 10  (1.02s)
 
 
-      κ₀=  1.0  ν₀=  7  CPs= 11  (1.05s)
+      κ₀=  1.0  ν₀=  7  CPs= 11  (0.98s)
 
 
-      κ₀=  1.0  ν₀= 15  CPs= 10  (1.04s)
+      κ₀=  1.0  ν₀= 15  CPs= 10  (1.03s)
 
 
-      κ₀=  1.0  ν₀= 55  CPs=  7  (1.03s)
+      κ₀=  1.0  ν₀= 55  CPs=  7  (1.00s)
 
 
-      κ₀= 10.0  ν₀=  7  CPs= 13  (1.09s)
+      κ₀= 10.0  ν₀=  7  CPs= 13  (1.03s)
 
 
-      κ₀= 10.0  ν₀= 15  CPs= 10  (1.05s)
+      κ₀= 10.0  ν₀= 15  CPs= 10  (0.97s)
 
 
-      κ₀= 10.0  ν₀= 55  CPs=  6  (1.04s)
+      κ₀= 10.0  ν₀= 55  CPs=  6  (1.10s)
 
 
 
@@ -773,17 +790,24 @@ plt.show()
 
 ### Reading experiment 4
 
-The heatmap answers the stability question directly: if boundary count
-varies little across the 3x3 grid, the results are prior-robust. If
-there is a large gradient — typically weakening as ν₀ grows, because
-a stronger covariance prior makes the predictive distribution less
-responsive to new data — the conclusions depend meaningfully on prior
-choice and that should be reported.
+The heatmap shows a clear gradient along ν₀: boundary counts drop
+from 11–13 at ν₀=7 (weak prior) to 6–10 at ν₀=55 (strong prior) —
+more than a 2x difference. This is expected: a stronger covariance
+prior makes the predictive distribution less responsive to new data,
+so the model requires larger distributional shifts before declaring
+a change. The κ₀ axis has a weaker effect, with counts varying by
+only 1–3 across each row.
 
-The ERL comparison panel shows whether the *timing* of detections
-changes even when the count does not. Prior choice can shift the
-exact date of a detected boundary without changing whether it is
-detected, which is visible here as a horizontal shift in the ERL drop.
+This means the choice of ν₀ matters substantively for this data set
+and should be reported alongside results. The weak-prior baseline
+(ν₀=D+2=7) is permissive — increasing ν₀ suppresses weaker
+detections while preserving the strongest ones.
+
+The ERL comparison panel overlays weak, baseline, and strong priors.
+The three curves largely track each other at major drops, suggesting
+the *timing* of the strongest detections is stable even as the count
+changes. However, the curves are difficult to distinguish visually —
+the weak and baseline settings produce nearly identical ERL traces.
 
 ---
 ## Experiment 5: Extraction method comparison
@@ -910,16 +934,27 @@ plt.show()
 All three methods operate on the same posterior so any differences are
 purely attributable to the extraction logic, not the model.
 
-ERL drops are smooth and lag-robust: E[r_t] integrates over all run
-lengths so a brief posterior fluctuation doesn't produce a false spike.
-MAP run length is noisy at short time scales — the MAP can momentarily
-snap to r=0 during locally unusual observations even without a
-structural change. Posterior mass concentration is the most direct
-interpretation but depends on the threshold (20 days chosen here).
+ERL detects 11 boundaries; MAP and posterior mass each detect 22 —
+exactly double. The ERL trace is visibly smoother, which explains the
+lower count: E[r_t] integrates over all run lengths, so brief
+posterior fluctuations are averaged out rather than producing spikes.
+MAP is the noisiest — it can snap to r=0 on a single unusual
+observation without a genuine regime change. Posterior mass
+(P(r_t < 20)) is more stable than MAP but still flags short-lived
+concentration events that ERL smooths over.
 
-The agreement count above shows how many boundaries are detected by
-all three methods simultaneously — those are the most credible
-detections and are the ones reported in the baseline.
+Agreement across all three methods is low: only 5 of the 11 ERL
+detections are confirmed by both MAP and posterior mass. This means
+fewer than half of the baseline's reported change points are
+consensus detections. The 9 MAP-only boundaries are likely noise —
+transient posterior fluctuations that don't persist long enough to
+move E[r_t]. The 1 ERL-only detection may reflect a gradual shift
+that accumulates in the expectation without concentrating mass on
+short run lengths.
+
+This suggests ERL is the most conservative extraction method, but
+users should be aware that many of its detections are not confirmed
+by alternative summaries of the same posterior.
 
 ---
 ## Summary
@@ -960,7 +995,7 @@ print(f"{'Exp 5 — Posterior mass extraction':<40} {len(cps_mass):>5}")
     =================================================================
     Experiment                                 CPs      Time
     -----------------------------------------------------------------
-    Exp 1 — Baseline (λ=200, Constant, D=5)     11     1.01s
+    Exp 1 — Baseline (λ=200, Constant, D=5)     11     1.06s
     Exp 2 — λ=50                                11
     Exp 2 — λ=100                               11
     Exp 2 — λ=200                               11
