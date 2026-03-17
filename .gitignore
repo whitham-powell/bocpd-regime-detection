@@ -7,5 +7,6 @@ build/
 .pytest_cache/
 .ruff_cache/
 .ipynb_checkpoints/
+notebooks/*.ipynb
 figures/*.png
 figures/*.pdf

@@ -1,4 +1,4 @@
-.PHONY: install install-dev test lint format notebooks figures clean
+.PHONY: install install-dev test lint format notebooks docs figures clean
 
 install:
 	uv sync
@@ -20,24 +20,58 @@ format:
 
 notebooks:
 	uv run jupytext --to ipynb notebooks/*.py
-	uv run jupyter nbconvert --execute --inplace notebooks/*.ipynb
+
+docs: notebooks
+	@mkdir -p docs
+	@tmpdir=$$(mktemp -d) && \
+	for nb in notebooks/*.ipynb; do \
+		if [ -f "$$nb" ]; then \
+			name=$$(basename "$$nb" .ipynb); \
+			echo "Executing $$name..."; \
+			uv run jupyter nbconvert "$$nb" \
+				--to notebook --execute \
+				--ExecutePreprocessor.timeout=600 \
+				--output-dir="$$tmpdir" || true; \
+		fi; \
+	done && \
+	for nb in "$$tmpdir"/*.ipynb; do \
+		if [ -f "$$nb" ]; then \
+			name=$$(basename "$$nb" .ipynb); \
+			echo "Rendering $$name to markdown..."; \
+			uv run jupyter nbconvert "$$nb" \
+				--to markdown \
+				--output-dir=docs \
+				--NbConvertApp.output_files_dir="$${name}_files" || true; \
+		fi; \
+	done && \
+	rm -rf "$$tmpdir"
+	@echo "Rendered notebooks to docs/"
 
 figures: notebooks
 	@mkdir -p figures
-	@for nb in notebooks/*.ipynb; do \
+	@tmpdir=$$(mktemp -d) && \
+	for nb in notebooks/*.ipynb; do \
 		if [ -f "$$nb" ]; then \
-			echo "Extracting figures from $$nb..."; \
+			echo "Executing $$(basename $$nb)..."; \
+			uv run jupyter nbconvert "$$nb" \
+				--to notebook --execute \
+				--ExecutePreprocessor.timeout=600 \
+				--output-dir="$$tmpdir" || true; \
+		fi; \
+	done && \
+	for nb in "$$tmpdir"/*.ipynb; do \
+		if [ -f "$$nb" ]; then \
+			echo "Extracting figures from $$(basename $$nb)..."; \
 			uv run jupyter nbconvert "$$nb" \
 				--to html \
-				--ExecutePreprocessor.timeout=600 \
-				--ExtractOutputPreprocessor.enabled=True 2>/dev/null || true; \
-		fi \
-	done
-	@find . -type d -name "*_files" | while read dir; do \
+				--ExtractOutputPreprocessor.enabled=True \
+				--output-dir="$$tmpdir" 2>/dev/null || true; \
+		fi; \
+	done && \
+	find "$$tmpdir" -type d -name "*_files" | while read dir; do \
 		cp $$dir/* figures/ 2>/dev/null || true; \
-		rm -r $$dir; \
-	done
-	@find notebooks -name '*.html' -delete 2>/dev/null || true
+	done && \
+	rm -rf "$$tmpdir"
 	@echo "Figures extracted to figures/"
 
 clean:
