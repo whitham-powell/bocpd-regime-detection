@@ -8,5 +8,4 @@ build/
 .ruff_cache/
 .ipynb_checkpoints/
 notebooks/*.ipynb
-figures/*.png
-figures/*.pdf
+extracted_figures/
