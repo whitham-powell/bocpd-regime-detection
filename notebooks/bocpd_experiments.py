@@ -53,12 +53,9 @@
 # %%
 import time
 
-import matplotlib.colors as mcolors
-import matplotlib.dates as mdates
 import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 from finfeatures import FeaturePipeline
 from finfeatures.features.price import LogTransform
 from finfeatures.sources import YFinanceSource
@@ -71,13 +68,15 @@ from bocpd import (
     MultivariateNormalNIW,
     extract_change_points_with_bounds,
 )
-
-# Colour palette — consistent across all figures
-C_CP = "#7F77DD"  # purple  — change point markers
-C_CI = "#AFA9EC"  # light purple — credible interval bands
-C_ERL = "#534AB7"  # dark purple — ERL line
-C_EVENT = "#444441"  # dark gray — known event markers
-C_PRICE = "#2C2C2A"  # near black — price line
+from bocpd.plotting import (
+    COLORS,
+    draw_change_points,
+    format_xaxis,
+    mark_events,
+    plot_erl,
+    plot_price,
+    plot_run_length_heatmap,
+)
 
 print("Imports OK")
 
@@ -128,44 +127,6 @@ KNOWN_EVENTS = {
     "2022 bottom": "2022-10-13",
     "2023 rally": "2023-01-03",
 }
-
-
-# %%
-def mark_events(ax, dates_index, alpha=0.3, label_first=True):
-    """Draw dotted vertical lines for known market events."""
-    first = True
-    for _name, ds in KNOWN_EVENTS.items():
-        dt = pd.Timestamp(ds)
-        if dates_index[0] <= dt <= dates_index[-1]:
-            ax.axvline(
-                dt,
-                color=C_EVENT,
-                lw=0.8,
-                alpha=alpha,
-                ls=":",
-                label="Known events" if (first and label_first) else None,
-            )
-            first = False
-
-
-def format_xaxis(ax):
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
-    ax.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
-    plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
-
-
-def draw_change_points(ax, cps, dates_index, color=C_CP, alpha_line=0.8, draw_ci=True):
-    """Draw change point verticals and optional credible interval bands."""
-    for cp in cps:
-        dt = dates_index[cp["index"]]
-        ax.axvline(dt, color=color, lw=1.8, alpha=alpha_line)
-        if draw_ci:
-            ax.axvspan(
-                dates_index[cp["lower"]],
-                dates_index[cp["upper"]],
-                alpha=0.08,
-                color=color,
-            )
 
 
 # %% [markdown]
@@ -246,10 +207,9 @@ ax_cpp = fig.add_subplot(gs[3], sharex=ax_price)
 price = raw["close"].reindex(dates)
 
 # -- Panel 1: price --
-ax_price.plot(dates, price.values, color=C_PRICE, lw=0.8, label="SPY close")
+plot_price(ax_price, price.values, dates, label="SPY close")
 draw_change_points(ax_price, cps_baseline, dates)
-mark_events(ax_price, dates)
-ax_price.set_ylabel("Price ($)")
+mark_events(ax_price, KNOWN_EVENTS, dates)
 ax_price.set_title(
     f"BOCPD baseline — MultivariateNIW  "
     f"(D={D}, λ={BASELINE_LAMBDA}, κ₀={BASELINE_KAPPA0}, ν₀={int(BASELINE_NU0)})",
@@ -257,47 +217,26 @@ ax_price.set_title(
     fontweight="bold",
 )
 ax_price.legend(fontsize=8, loc="upper left")
-ax_price.grid(True, alpha=0.25)
 plt.setp(ax_price.get_xticklabels(), visible=False)
 
 # -- Panel 2: run-length posterior heatmap --
 posteriors = bocpd_baseline["run_length_posterior"]
-max_rl = max(len(p) for p in posteriors)
-rl_matrix = np.zeros((max_rl, T))
-for t, p in enumerate(posteriors):
-    rl_matrix[: len(p), t] = p
-rl_matrix = np.clip(rl_matrix, 1e-6, 1.0)
-
-date_edges = np.append(dates, dates[-1] + pd.Timedelta(days=1))
-im = ax_rl.pcolormesh(
-    date_edges,
-    np.arange(max_rl + 1),
-    rl_matrix,
-    cmap="gray_r",
-    norm=mcolors.LogNorm(vmin=1e-5, vmax=1.0),
-    shading="flat",
-    rasterized=True,
-)
-ax_rl.set_ylim(0, min(500, max_rl))
+plot_run_length_heatmap(ax_rl, posteriors, dates)
 draw_change_points(ax_rl, cps_baseline, dates, draw_ci=False, alpha_line=0.5)
-mark_events(ax_rl, dates, label_first=False)
-ax_rl.set_ylabel("Run length (days)")
-fig.colorbar(im, ax=ax_rl, label=r"$P(r_t \mid x_{1:t})$", shrink=0.8, pad=0.01)
+mark_events(ax_rl, KNOWN_EVENTS, dates, label_first=False)
 plt.setp(ax_rl.get_xticklabels(), visible=False)
 
 # -- Panel 3: expected run length with credible bands --
 erl = bocpd_baseline["expected_run_length"]
-ax_erl.plot(dates, erl, color=C_ERL, lw=1, label="E[r_t]")
+plot_erl(ax_erl, erl, dates)
 draw_change_points(ax_erl, cps_baseline, dates)
-mark_events(ax_erl, dates, label_first=False)
-ax_erl.set_ylabel("Expected run length")
+mark_events(ax_erl, KNOWN_EVENTS, dates, label_first=False)
 ax_erl.legend(fontsize=8)
-ax_erl.grid(True, alpha=0.25)
 plt.setp(ax_erl.get_xticklabels(), visible=False)
 
 # -- Panel 4: change-point probability --
 cpp = bocpd_baseline["change_point_prob"]
-ax_cpp.plot(dates, cpp, color=C_CP, lw=0.8)
+ax_cpp.plot(dates, cpp, color=COLORS.cp, lw=0.8)
 ax_cpp.axhline(
     1.0 / BASELINE_LAMBDA,
     color="red",
@@ -305,7 +244,7 @@ ax_cpp.axhline(
     lw=1,
     label=f"Prior P(CP) = 1/λ = {1 / BASELINE_LAMBDA:.4f}",
 )
-mark_events(ax_cpp, dates, label_first=False)
+mark_events(ax_cpp, KNOWN_EVENTS, dates, label_first=False)
 ax_cpp.set_ylabel("P(r_t=0 | x₁:t)")
 ax_cpp.set_xlabel("Date")
 ax_cpp.legend(fontsize=8)
@@ -379,15 +318,13 @@ fig.subplots_adjust(hspace=0.07)
 purples = ["#CECBF6", "#AFA9EC", "#7F77DD", "#534AB7", "#3C3489"]
 
 # -- Top panel: price context --
-axes[0].plot(dates, price.values, color=C_PRICE, lw=0.7)
-mark_events(axes[0], dates)
-axes[0].set_ylabel("Price ($)")
+plot_price(axes[0], price.values, dates)
+mark_events(axes[0], KNOWN_EVENTS, dates)
 axes[0].set_title(
     "Experiment 2 — λ sweep: prior on regime duration",
     fontsize=11,
     fontweight="bold",
 )
-axes[0].grid(True, alpha=0.2)
 plt.setp(axes[0].get_xticklabels(), visible=False)
 
 # -- One panel per λ --
@@ -400,7 +337,7 @@ for i, (lam, col) in enumerate(zip(LAMBDAS, purples, strict=False)):
     )
     ax.axhline(1.0, color=col, lw=0.6, ls=":", alpha=0.7)  # E[r] = λ line
     draw_change_points(ax, e2_cps[lam], dates, color=col, draw_ci=False)
-    mark_events(ax, dates, label_first=False)
+    mark_events(ax, KNOWN_EVENTS, dates, label_first=False)
     ax.set_ylabel("E[r_t] / λ")
     ax.legend(fontsize=8, loc="upper right")
     ax.grid(True, alpha=0.2)
@@ -427,7 +364,7 @@ peak_drops = [
     for lam in lam_vals
 ]
 
-axes[0].plot(lam_vals, cp_counts, "o-", color=C_ERL, lw=2, ms=8)
+axes[0].plot(lam_vals, cp_counts, "o-", color=COLORS.erl, lw=2, ms=8)
 for lam, count in zip(lam_vals, cp_counts, strict=False):
     axes[0].annotate(
         str(count),
@@ -447,7 +384,7 @@ axes[0].set_title(
 axes[0].grid(True, alpha=0.3)
 axes[0].invert_xaxis()  # left = most sensitive
 
-axes[1].plot(lam_vals, peak_drops, "s-", color=C_CP, lw=2, ms=8)
+axes[1].plot(lam_vals, peak_drops, "s-", color=COLORS.cp, lw=2, ms=8)
 axes[1].set_xlabel("λ (expected regime duration, days)")
 axes[1].set_ylabel("Max ERL drop fraction")
 axes[1].set_title(
@@ -556,7 +493,7 @@ for i, ((name, result), col) in enumerate(
     erl = result["expected_run_length"]
     ax.plot(dates, erl, color=col, lw=1, label=f"{name}  ({len(e3_cps[name])} CPs)")
     draw_change_points(ax, e3_cps[name], dates, color=col, draw_ci=False)
-    mark_events(ax, dates, label_first=False)
+    mark_events(ax, KNOWN_EVENTS, dates, label_first=False)
     ax.set_ylabel("E[run length]")
     ax.legend(fontsize=8, loc="upper right")
     ax.grid(True, alpha=0.25)
@@ -680,7 +617,7 @@ for key, label, col, lw in [
     (
         base_key,
         f"Base   κ₀={BASELINE_KAPPA0}, ν₀={int(BASELINE_NU0)}",
-        C_ERL,
+        COLORS.erl,
         1.8,
     ),
     (
@@ -693,8 +630,8 @@ for key, label, col, lw in [
     erl = e4_results[key]["expected_run_length"]
     ax.plot(dates, erl, color=col, lw=lw, label=label)
 
-draw_change_points(ax, e4_cps[base_key], dates, color=C_CP, draw_ci=False)
-mark_events(ax, dates, label_first=False)
+draw_change_points(ax, e4_cps[base_key], dates, color=COLORS.cp, draw_ci=False)
+mark_events(ax, KNOWN_EVENTS, dates, label_first=False)
 ax.set_ylabel("Expected run length")
 ax.set_xlabel("Date")
 ax.set_title(
@@ -799,22 +736,20 @@ method_data = [
 ]
 
 # -- Panel 0: price --
-axes[0].plot(dates, price.values, color=C_PRICE, lw=0.7)
-mark_events(axes[0], dates)
-axes[0].set_ylabel("Price ($)")
+plot_price(axes[0], price.values, dates)
+mark_events(axes[0], KNOWN_EVENTS, dates)
 axes[0].set_title(
     "Experiment 5 — extraction method comparison (same posterior)",
     fontsize=11,
     fontweight="bold",
 )
-axes[0].grid(True, alpha=0.2)
 plt.setp(axes[0].get_xticklabels(), visible=False)
 
 # -- One panel per method --
 for ax, (label, series, cps, col) in zip(axes[1:], method_data, strict=False):
     ax.plot(dates, series, color=col, lw=1, label=label)
     draw_change_points(ax, cps, dates, color=col, draw_ci=False, alpha_line=0.7)
-    mark_events(ax, dates, label_first=False)
+    mark_events(ax, KNOWN_EVENTS, dates, label_first=False)
     ax.set_ylabel(label, fontsize=9)
     ax.legend(fontsize=8, loc="upper right")
     ax.grid(True, alpha=0.2)
@@ -874,3 +809,5 @@ for kappa0 in KAPPA0_VALS:
 print(f"{'Exp 5 — ERL extraction':<40} {len(cps_erl):>5}")
 print(f"{'Exp 5 — MAP extraction':<40} {len(cps_map):>5}")
 print(f"{'Exp 5 — Posterior mass extraction':<40} {len(cps_mass):>5}")
+
+# %%

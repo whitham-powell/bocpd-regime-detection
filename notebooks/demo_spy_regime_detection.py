@@ -28,12 +28,9 @@
 # Reference: Adams & MacKay (2007), *Bayesian Online Changepoint Detection*.
 
 # %%
-import matplotlib.colors as mcolors
-import matplotlib.dates as mdates
 import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 from finfeatures.sources import YFinanceSource
 
 from bocpd import (
@@ -42,15 +39,15 @@ from bocpd import (
     UnivariateNormalNIG,
     extract_change_points_with_bounds,
 )
-
-# Colour palette — consistent with experiments notebook
-C_CP = "#7F77DD"  # purple  — change point markers
-C_CI = "#AFA9EC"  # light purple — credible interval bands
-C_ERL = "#534AB7"  # dark purple — ERL line
-C_EVENT = "#444441"  # dark gray — known event markers
-C_PRICE = "#2C2C2A"  # near black — price line
-C_PRED = "#1D9E75"  # teal — predictive envelope
-C_RETURN = "#888886"  # mid gray — log return scatter
+from bocpd.plotting import (
+    draw_change_points,
+    format_xaxis,
+    mark_events,
+    plot_erl,
+    plot_predictive_envelope,
+    plot_price,
+    plot_run_length_heatmap,
+)
 
 KNOWN_EVENTS = {
     "COVID crash": "2020-02-19",
@@ -59,44 +56,6 @@ KNOWN_EVENTS = {
     "2022 bottom": "2022-10-13",
     "2023 rally": "2023-01-03",
 }
-
-
-def mark_events(ax, dates_index, alpha=0.3, label_first=True):
-    """Draw dotted vertical lines for known market events."""
-    first = True
-    for _name, ds in KNOWN_EVENTS.items():
-        dt = pd.Timestamp(ds)
-        if dates_index[0] <= dt <= dates_index[-1]:
-            ax.axvline(
-                dt,
-                color=C_EVENT,
-                lw=0.8,
-                alpha=alpha,
-                ls=":",
-                label="Known events" if (first and label_first) else None,
-            )
-            first = False
-
-
-def format_xaxis(ax):
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
-    ax.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
-    plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
-
-
-def draw_change_points(ax, cps, dates_index, color=C_CP, alpha_line=0.8, draw_ci=True):
-    """Draw change point verticals and optional credible interval bands."""
-    for cp in cps:
-        dt = dates_index[cp["index"]]
-        ax.axvline(dt, color=color, lw=1.8, alpha=alpha_line)
-        if draw_ci:
-            ax.axvspan(
-                dates_index[cp["lower"]],
-                dates_index[cp["upper"]],
-                alpha=0.08,
-                color=color,
-            )
-
 
 print("Imports OK")
 
@@ -153,16 +112,7 @@ for b in boundaries:
 # as within-regime data accumulates.
 
 # %%
-T = len(log_returns)
 posteriors = result["run_length_posterior"]
-max_rl = max(len(p) for p in posteriors)
-rl_matrix = np.zeros((max_rl, T))
-for t, p in enumerate(posteriors):
-    rl_matrix[: len(p), t] = p
-rl_matrix = np.clip(rl_matrix, 1e-6, 1.0)
-
-pred_mean = result["predictive_mean"]
-pred_std = np.sqrt(result["predictive_var"])
 erl = result["expected_run_length"]
 
 fig = plt.figure(figsize=(14, 14))
@@ -174,65 +124,42 @@ ax_rl = fig.add_subplot(gs[2], sharex=ax_price)
 ax_erl = fig.add_subplot(gs[3], sharex=ax_price)
 
 # -- Panel 1: price --
-ax_price.plot(dates, close, color=C_PRICE, lw=0.8, label="SPY close")
+plot_price(ax_price, close, dates, label="SPY close")
 draw_change_points(ax_price, boundaries, dates_returns)
-mark_events(ax_price, dates_returns)
-ax_price.set_ylabel("Price ($)")
+mark_events(ax_price, KNOWN_EVENTS, dates_returns)
 ax_price.set_title(
     "SPY regime detection — UnivariateNormalNIG  (λ=100, κ₀=0.1)",
     fontsize=11,
     fontweight="bold",
 )
 ax_price.legend(fontsize=8, loc="upper left")
-ax_price.grid(True, alpha=0.25)
 plt.setp(ax_price.get_xticklabels(), visible=False)
 
 # -- Panel 2: predictive envelope --
-ax_pred.plot(
-    dates_returns, log_returns, color=C_RETURN, lw=0.3, alpha=0.6, label="Log return"
-)
-ax_pred.plot(dates_returns, pred_mean, color=C_PRED, lw=1, label="Predictive mean")
-ax_pred.fill_between(
+plot_predictive_envelope(
+    ax_pred,
     dates_returns,
-    pred_mean - pred_std,
-    pred_mean + pred_std,
-    color=C_PRED,
-    alpha=0.15,
-    label="±1 std",
+    log_returns,
+    result["predictive_mean"],
+    result["predictive_var"],
 )
 draw_change_points(ax_pred, boundaries, dates_returns, draw_ci=False, alpha_line=0.5)
-mark_events(ax_pred, dates_returns, label_first=False)
-ax_pred.set_ylabel("Log return")
+mark_events(ax_pred, KNOWN_EVENTS, dates_returns, label_first=False)
 ax_pred.legend(fontsize=8, loc="upper right")
-ax_pred.grid(True, alpha=0.25)
 plt.setp(ax_pred.get_xticklabels(), visible=False)
 
 # -- Panel 3: run-length posterior heatmap --
-date_edges = np.append(dates_returns, dates_returns[-1] + pd.Timedelta(days=1))
-im = ax_rl.pcolormesh(
-    date_edges,
-    np.arange(max_rl + 1),
-    rl_matrix,
-    cmap="gray_r",
-    norm=mcolors.LogNorm(vmin=1e-5, vmax=1.0),
-    shading="flat",
-    rasterized=True,
-)
-ax_rl.set_ylim(0, min(500, max_rl))
+plot_run_length_heatmap(ax_rl, posteriors, dates_returns)
 draw_change_points(ax_rl, boundaries, dates_returns, draw_ci=False, alpha_line=0.5)
-mark_events(ax_rl, dates_returns, label_first=False)
-ax_rl.set_ylabel("Run length (days)")
-fig.colorbar(im, ax=ax_rl, label=r"$P(r_t \mid x_{1:t})$", shrink=0.8, pad=0.01)
+mark_events(ax_rl, KNOWN_EVENTS, dates_returns, label_first=False)
 plt.setp(ax_rl.get_xticklabels(), visible=False)
 
 # -- Panel 4: expected run length with credible bands --
-ax_erl.plot(dates_returns, erl, color=C_ERL, lw=1, label="E[r_t]")
+plot_erl(ax_erl, erl, dates_returns)
 draw_change_points(ax_erl, boundaries, dates_returns)
-mark_events(ax_erl, dates_returns, label_first=False)
-ax_erl.set_ylabel("Expected run length")
+mark_events(ax_erl, KNOWN_EVENTS, dates_returns, label_first=False)
 ax_erl.set_xlabel("Date")
 ax_erl.legend(fontsize=8)
-ax_erl.grid(True, alpha=0.25)
 format_xaxis(ax_erl)
 
 fig.tight_layout()

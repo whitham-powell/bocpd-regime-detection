@@ -43,6 +43,7 @@ import pandas as pd
 from matplotlib.colors import LogNorm
 
 from bocpd import BOCPD, ConstantHazard, UnivariateNormalNIG
+from bocpd.plotting import build_rl_matrix
 
 try:
     _here = Path(__file__).resolve().parent
@@ -96,11 +97,8 @@ posteriors = result["run_length_posterior"]
 erl = result["expected_run_length"]
 T = len(posteriors)
 max_rl = max(len(p) for p in posteriors)
-rl_matrix = np.zeros((max_rl, T))
-for t, p in enumerate(posteriors):
-    rl_matrix[: len(p), t] = p
 
-rl_matrix_clipped = np.clip(rl_matrix, 1e-4, 1.0)
+rl_matrix_clipped = build_rl_matrix(posteriors, clip_lo=1e-4)
 
 # Historical events marked in the paper
 events = {
