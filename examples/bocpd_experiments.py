@@ -18,7 +18,7 @@
 # # BOCPD Experiments: Systematic Sensitivity Analysis
 #
 # This notebook characterises how BOCPD's output changes under its
-# principal design choices, using SPY daily data from 2020 onward.
+# principal design choices, using SPY daily data from 2020-01-01 to 2026-03-16.
 # Data and features are provided by `finfeatures` throughout.
 #
 # All five experiments share a single feature matrix and run in one
@@ -94,9 +94,10 @@ print("Imports OK")
 # %%
 TICKER = "SPY"
 START_DATE = "2020-01-01"
+END_DATE = "2026-03-16"
 
 source = YFinanceSource()
-raw = source.fetch(TICKER, start=START_DATE)
+raw = source.fetch(TICKER, start=START_DATE, end=END_DATE)
 
 print(f"Loaded {TICKER}: {len(raw)} rows")
 print(f"Date range: {raw.index[0].date()} to {raw.index[-1].date()}")

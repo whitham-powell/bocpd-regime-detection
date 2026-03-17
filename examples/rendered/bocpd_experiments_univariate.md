@@ -69,25 +69,26 @@ print("Imports OK")
 ---
 ## Shared data
 
-SPY close prices from 2020-01-01 onward, converted to log returns
-via `np.diff(np.log(close))`. This loses the first observation,
-giving T ≈ 1300 time steps of a single 1D feature.
+SPY close prices from 2020-01-01 to 2026-03-16, converted to log
+returns via `np.diff(np.log(close))`. This loses the first
+observation, giving T ≈ 1550 time steps of a single 1D feature.
 
 
 ```python
 TICKER = "SPY"
 START_DATE = "2020-01-01"
+END_DATE = "2026-03-16"
 
 source = YFinanceSource()
-raw = source.fetch(TICKER, start=START_DATE)
+raw = source.fetch(TICKER, start=START_DATE, end=END_DATE)
 close = raw["close"].dropna()
 
 print(f"Loaded {TICKER}: {len(close)} prices")
 print(f"Date range: {close.index[0].date()} to {close.index[-1].date()}")
 ```
 
-    Loaded SPY: 1558 prices
-    Date range: 2020-01-02 to 2026-03-16
+    Loaded SPY: 1557 prices
+    Date range: 2020-01-02 to 2026-03-13
 
 
 
@@ -118,10 +119,10 @@ KNOWN_EVENTS = {
 price = close.reindex(dates)
 ```
 
-    Log returns: T=1557
-    Date range: 2020-01-03 to 2026-03-16
-    Mean:  0.000520
-    Std:   0.012957
+    Log returns: T=1556
+    Date range: 2020-01-03 to 2026-03-13
+    Mean:  0.000514
+    Std:   0.012958
     Min:   -0.115887
     Max:   0.099863
 
@@ -191,7 +192,7 @@ for cp in cps_baseline:
     )
 ```
 
-    Baseline BOCPD: 4.78s
+    Baseline BOCPD: 4.72s
     Detected 9 change points:
       2020-02-25  90% CI [2020-02-13 -- 2020-02-24]  (11d wide)  severity=0.92
       2020-06-11  90% CI [2020-03-26 -- 2020-05-21]  (56d wide)  severity=0.64
@@ -257,7 +258,7 @@ fig.tight_layout()
 plt.show()
 ```
 
-    /tmp/ipykernel_24673/3137169141.py:48: UserWarning: This figure includes Axes that are not compatible with tight_layout, so results might be incorrect.
+    /tmp/ipykernel_6509/3137169141.py:48: UserWarning: This figure includes Axes that are not compatible with tight_layout, so results might be incorrect.
       fig.tight_layout()
 
 
@@ -336,19 +337,19 @@ for lam in LAMBDAS:
     λ sweep:
 
 
-      λ=  50  change_points= 10  (4.86s)
+      λ=  50  change_points= 10  (4.77s)
 
 
-      λ= 100  change_points=  9  (4.72s)
+      λ= 100  change_points=  9  (4.85s)
 
 
-      λ= 200  change_points=  8  (4.85s)
+      λ= 200  change_points=  8  (4.72s)
 
 
-      λ= 400  change_points=  8  (4.68s)
+      λ= 400  change_points=  8  (4.78s)
 
 
-      λ= 800  change_points=  7  (4.86s)
+      λ= 800  change_points=  7  (4.69s)
 
 
 
@@ -523,13 +524,13 @@ for name, hazard in hazard_configs.items():
     Hazard comparison:
 
 
-      Constant  (λ=100)                    CPs=  9  (4.81s)
+      Constant  (λ=100)                    CPs=  9  (4.76s)
 
 
-      Increasing (scale=100)               CPs= 16  (4.87s)
+      Increasing (scale=100)               CPs= 16  (4.69s)
 
 
-      Decreasing (sticky)                  CPs=  1  (4.66s)
+      Decreasing (sticky)                  CPs=  1  (4.71s)
 
 
 
@@ -579,7 +580,7 @@ fig.tight_layout()
 plt.show()
 ```
 
-    /tmp/ipykernel_24673/2790807388.py:42: UserWarning: This figure includes Axes that are not compatible with tight_layout, so results might be incorrect.
+    /tmp/ipykernel_6509/2790807388.py:42: UserWarning: This figure includes Axes that are not compatible with tight_layout, so results might be incorrect.
       fig.tight_layout()
 
 
@@ -663,31 +664,31 @@ for kappa0 in KAPPA0_VALS:
     NIG prior sensitivity grid:
 
 
-      κ₀= 0.01  α₀=  1.0  CPs=  9  (4.88s)
+      κ₀= 0.01  α₀=  1.0  CPs=  9  (4.69s)
 
 
-      κ₀= 0.01  α₀=  5.0  CPs= 12  (4.76s)
+      κ₀= 0.01  α₀=  5.0  CPs= 12  (4.70s)
 
 
-      κ₀= 0.01  α₀= 20.0  CPs= 15  (4.81s)
+      κ₀= 0.01  α₀= 20.0  CPs= 15  (4.63s)
 
 
-      κ₀= 0.10  α₀=  1.0  CPs=  9  (4.75s)
+      κ₀= 0.10  α₀=  1.0  CPs=  9  (4.65s)
 
 
-      κ₀= 0.10  α₀=  5.0  CPs= 13  (4.89s)
+      κ₀= 0.10  α₀=  5.0  CPs= 13  (4.77s)
 
 
-      κ₀= 0.10  α₀= 20.0  CPs= 16  (4.81s)
+      κ₀= 0.10  α₀= 20.0  CPs= 16  (4.65s)
 
 
-      κ₀= 1.00  α₀=  1.0  CPs=  7  (4.77s)
+      κ₀= 1.00  α₀=  1.0  CPs=  7  (4.71s)
 
 
-      κ₀= 1.00  α₀=  5.0  CPs= 10  (4.72s)
+      κ₀= 1.00  α₀=  5.0  CPs= 10  (4.60s)
 
 
-      κ₀= 1.00  α₀= 20.0  CPs= 16  (4.75s)
+      κ₀= 1.00  α₀= 20.0  CPs= 16  (4.74s)
 
 
 
@@ -858,7 +859,7 @@ print(f"  MAP only:                      {len(map_dates - erl_dates - mass_dates
       Agreement (ERL ∩ mass):        3
       Agreement (all three):         2
       ERL only:                      5
-      MAP only:                      12
+      MAP only:                      11
 
 
 
@@ -977,7 +978,7 @@ print(f"{'Exp 5 — Posterior mass extraction':<40} {len(cps_mass):>5}")
     =================================================================
     Experiment                                 CPs      Time
     -----------------------------------------------------------------
-    Exp 1 — Baseline (λ=100, NIG)                9     4.78s
+    Exp 1 — Baseline (λ=100, NIG)                9     4.72s
     Exp 2 — λ=50                                10
     Exp 2 — λ=100                                9
     Exp 2 — λ=200                                8

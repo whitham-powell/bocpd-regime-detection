@@ -1,7 +1,7 @@
 # BOCPD Experiments: Systematic Sensitivity Analysis
 
 This notebook characterises how BOCPD's output changes under its
-principal design choices, using SPY daily data from 2020 onward.
+principal design choices, using SPY daily data from 2020-01-01 to 2026-03-16.
 Data and features are provided by `finfeatures` throughout.
 
 All five experiments share a single feature matrix and run in one
@@ -81,17 +81,18 @@ mean and covariance of the features.
 ```python
 TICKER = "SPY"
 START_DATE = "2020-01-01"
+END_DATE = "2026-03-16"
 
 source = YFinanceSource()
-raw = source.fetch(TICKER, start=START_DATE)
+raw = source.fetch(TICKER, start=START_DATE, end=END_DATE)
 
 print(f"Loaded {TICKER}: {len(raw)} rows")
 print(f"Date range: {raw.index[0].date()} to {raw.index[-1].date()}")
 print(f"Columns: {list(raw.columns)}")
 ```
 
-    Loaded SPY: 1558 rows
-    Date range: 2020-01-02 to 2026-03-16
+    Loaded SPY: 1557 rows
+    Date range: 2020-01-02 to 2026-03-13
     Columns: ['open', 'high', 'low', 'close', 'volume']
 
 
@@ -123,11 +124,11 @@ KNOWN_EVENTS = {
 }
 ```
 
-    Feature matrix: T=1558, D=5
+    Feature matrix: T=1557, D=5
     Features: ['log_open', 'log_high', 'log_low', 'log_close', 'log_volume']
-    Date range: 2020-01-02 to 2026-03-16
-    Mean: [ 6.0734  6.0796  6.0667  6.0736 18.1137]
-    Std:  [0.2567 0.2549 0.2584 0.2567 0.4004]
+    Date range: 2020-01-02 to 2026-03-13
+    Mean: [ 6.0731  6.0794  6.0664  6.0733 18.1136]
+    Std:  [0.2566 0.2547 0.2582 0.2565 0.4005]
 
 
 ---
@@ -197,7 +198,7 @@ for cp in cps_baseline:
     )
 ```
 
-    Baseline BOCPD: 1.00s
+    Baseline BOCPD: 0.97s
     Detected 11 change points:
       2020-02-24  90% CI [2020-02-20 -- 2020-02-28]  (8d wide)  severity=0.97
       2020-05-14  90% CI [2020-04-06 -- 2020-04-15]  (9d wide)  severity=0.86
@@ -273,7 +274,7 @@ fig.tight_layout()
 plt.show()
 ```
 
-    /tmp/ipykernel_8860/1939338632.py:56: UserWarning: This figure includes Axes that are not compatible with tight_layout, so results might be incorrect.
+    /tmp/ipykernel_30836/1939338632.py:56: UserWarning: This figure includes Axes that are not compatible with tight_layout, so results might be incorrect.
       fig.tight_layout()
 
 
@@ -342,19 +343,19 @@ for lam in LAMBDAS:
     λ sweep:
 
 
-      λ=  50  change_points= 11  (0.99s)
+      λ=  50  change_points= 11  (1.01s)
 
 
-      λ= 100  change_points= 11  (0.99s)
+      λ= 100  change_points= 11  (1.06s)
 
 
-      λ= 200  change_points= 11  (0.97s)
+      λ= 200  change_points= 11  (1.02s)
 
 
-      λ= 400  change_points= 10  (1.04s)
+      λ= 400  change_points= 10  (1.01s)
 
 
-      λ= 800  change_points= 12  (0.98s)
+      λ= 800  change_points= 12  (1.03s)
 
 
 
@@ -541,10 +542,10 @@ for name, hazard in hazard_configs.items():
       Constant  (λ=200)                    CPs= 11  (1.03s)
 
 
-      Increasing (scale=200)               CPs= 12  (1.04s)
+      Increasing (scale=200)               CPs= 12  (1.03s)
 
 
-      Decreasing (sticky)                  CPs=  1  (1.06s)
+      Decreasing (sticky)                  CPs=  1  (1.05s)
 
 
 
@@ -594,7 +595,7 @@ fig.tight_layout()
 plt.show()
 ```
 
-    /tmp/ipykernel_8860/3876711818.py:42: UserWarning: This figure includes Axes that are not compatible with tight_layout, so results might be incorrect.
+    /tmp/ipykernel_30836/3876711818.py:42: UserWarning: This figure includes Axes that are not compatible with tight_layout, so results might be incorrect.
       fig.tight_layout()
 
 
@@ -678,31 +679,31 @@ for kappa0 in KAPPA0_VALS:
     Prior sensitivity grid:
 
 
-      κ₀=  0.1  ν₀=  7  CPs= 11  (1.01s)
+      κ₀=  0.1  ν₀=  7  CPs= 11  (1.02s)
 
 
-      κ₀=  0.1  ν₀= 15  CPs= 12  (1.02s)
+      κ₀=  0.1  ν₀= 15  CPs= 12  (1.01s)
 
 
-      κ₀=  0.1  ν₀= 55  CPs= 10  (1.01s)
+      κ₀=  0.1  ν₀= 55  CPs= 10  (1.08s)
 
 
-      κ₀=  1.0  ν₀=  7  CPs= 11  (1.01s)
+      κ₀=  1.0  ν₀=  7  CPs= 11  (1.03s)
 
 
       κ₀=  1.0  ν₀= 15  CPs= 10  (1.03s)
 
 
-      κ₀=  1.0  ν₀= 55  CPs=  7  (1.03s)
+      κ₀=  1.0  ν₀= 55  CPs=  7  (1.02s)
 
 
-      κ₀= 10.0  ν₀=  7  CPs= 13  (0.99s)
+      κ₀= 10.0  ν₀=  7  CPs= 13  (1.02s)
 
 
-      κ₀= 10.0  ν₀= 15  CPs= 10  (0.99s)
+      κ₀= 10.0  ν₀= 15  CPs= 10  (1.02s)
 
 
-      κ₀= 10.0  ν₀= 55  CPs=  6  (1.01s)
+      κ₀= 10.0  ν₀= 55  CPs=  6  (1.02s)
 
 
 
@@ -995,7 +996,7 @@ print(f"{'Exp 5 — Posterior mass extraction':<40} {len(cps_mass):>5}")
     =================================================================
     Experiment                                 CPs      Time
     -----------------------------------------------------------------
-    Exp 1 — Baseline (λ=200, Constant, D=5)     11     1.00s
+    Exp 1 — Baseline (λ=200, Constant, D=5)     11     0.97s
     Exp 2 — λ=50                                11
     Exp 2 — λ=100                               11
     Exp 2 — λ=200                               11

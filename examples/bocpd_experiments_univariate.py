@@ -83,16 +83,17 @@ print("Imports OK")
 # ---
 # ## Shared data
 #
-# SPY close prices from 2020-01-01 onward, converted to log returns
-# via `np.diff(np.log(close))`. This loses the first observation,
-# giving T ≈ 1300 time steps of a single 1D feature.
+# SPY close prices from 2020-01-01 to 2026-03-16, converted to log
+# returns via `np.diff(np.log(close))`. This loses the first
+# observation, giving T ≈ 1550 time steps of a single 1D feature.
 
 # %%
 TICKER = "SPY"
 START_DATE = "2020-01-01"
+END_DATE = "2026-03-16"
 
 source = YFinanceSource()
-raw = source.fetch(TICKER, start=START_DATE)
+raw = source.fetch(TICKER, start=START_DATE, end=END_DATE)
 close = raw["close"].dropna()
 
 print(f"Loaded {TICKER}: {len(close)} prices")
