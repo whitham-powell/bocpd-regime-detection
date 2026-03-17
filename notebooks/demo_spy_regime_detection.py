@@ -23,8 +23,6 @@
 # Reference: Adams & MacKay (2007), *Bayesian Online Changepoint Detection*.
 
 # %%
-from pathlib import Path
-
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
@@ -39,13 +37,6 @@ from bocpd import (
 )
 
 sns.set_theme(style="whitegrid")
-
-try:
-    _here = Path(__file__).resolve().parent
-except NameError:
-    _here = Path.cwd()  # Jupyter sets cwd to notebook dir
-FIGURES_DIR = _here.parent / "figures"
-FIGURES_DIR.mkdir(exist_ok=True)
 
 # %% [markdown]
 # ## Fetch SPY data
@@ -112,7 +103,6 @@ ax.set_xlabel("Date")
 ax.set_ylabel("Log return")
 ax.set_title("SPY daily log returns with predictive envelope and change points")
 fig.tight_layout()
-fig.savefig(FIGURES_DIR / "log_returns.png", dpi=150)
 plt.show()
 
 # %% [markdown]
@@ -143,7 +133,6 @@ ax.set_xlabel("Time (trading days)")
 ax.set_ylabel("Run length")
 ax.set_title("Run-length posterior $P(r_t \\mid x_{1:t})$")
 fig.tight_layout()
-fig.savefig(FIGURES_DIR / "run_length_posterior.png", dpi=150)
 plt.show()
 
 # %% [markdown]
@@ -170,7 +159,6 @@ ax.set_ylabel("Expected run length")
 ax.set_title("Expected run length with detected change points (90% CI bands)")
 ax.legend()
 fig.tight_layout()
-fig.savefig(FIGURES_DIR / "erl_change_points.png", dpi=150)
 plt.show()
 
 # %% [markdown]
@@ -195,7 +183,6 @@ ax.set_ylabel("Price ($)")
 ax.set_title("SPY daily close with BOCPD regime boundaries")
 ax.legend()
 fig.tight_layout()
-fig.savefig(FIGURES_DIR / "spy_regimes.png", dpi=150)
 plt.show()
 
 # %%

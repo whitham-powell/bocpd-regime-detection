@@ -48,8 +48,6 @@ try:
     _here = Path(__file__).resolve().parent
 except NameError:
     _here = Path.cwd()
-FIGURES_DIR = _here.parent / "figures"
-FIGURES_DIR.mkdir(exist_ok=True)
 
 # %% [markdown]
 # ## Load Dow Jones data (1972-1975)
@@ -175,7 +173,6 @@ ax_bot.set_ylabel("Run length")
 ax_bot.set_title(r"Run-length posterior $P(r_t \mid x_{1:t})$")
 
 fig.tight_layout()
-fig.savefig(FIGURES_DIR / "replicate_adams_mackay_fig3.png", dpi=150)
 plt.show()
 
 # %%
