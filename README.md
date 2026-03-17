@@ -46,11 +46,11 @@ for b in boundaries:
 
 ## Notebooks
 
-Example notebooks live in `notebooks/` (as Jupytext `.py` files). Rendered versions are in [`docs/`](docs/):
+Example notebooks live in `examples/` (as Jupytext `.py` files). Rendered versions are in [`examples/rendered/`](examples/rendered/):
 
-- [SPY regime detection](docs/demo_spy_regime_detection.md) — univariate NIG model with predictive envelope
-- [Sensitivity analysis](docs/bocpd_experiments.md) — systematic sweep of λ, hazard shape, and prior strength
-- [Adams & MacKay Fig. 3 replication](docs/replicate_adams_mackay_fig3.md) — reproducing the original paper's well-log example
+- [SPY regime detection](examples/rendered/demo_spy_regime_detection.md) — univariate NIG model with predictive envelope
+- [Sensitivity analysis](examples/rendered/bocpd_experiments.md) — systematic sweep of λ, hazard shape, and prior strength
+- [Adams & MacKay Fig. 3 replication](examples/rendered/replicate_adams_mackay_fig3.md) — reproducing the original paper's well-log example
 
 ## Reference
 
