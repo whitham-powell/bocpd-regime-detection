@@ -4,12 +4,24 @@ A modular Python implementation of Adams & MacKay (2007) for detecting regime ch
 
 ## Installation
 
-```bash
-# Core package
-pip install -e .
+### As a dependency in another project (uv)
 
-# With all development dependencies
-pip install -e ".[dev]"
+```bash
+uv add bocpd @ git+https://github.com/whitham-powell/bocpd-regime-detection.git
+```
+
+### Local development
+
+```bash
+git clone https://github.com/whitham-powell/bocpd-regime-detection.git
+cd bocpd-regime-detection
+uv sync          # installs core + dev dependencies
+```
+
+### Google Colab
+
+```python
+!pip install git+https://github.com/whitham-powell/bocpd-regime-detection.git
 ```
 
 ## Quick start
@@ -32,13 +44,13 @@ for b in boundaries:
     print(f"Change point at t={b['index']}, 90% CI: [{b['lower']}, {b['upper']}]")
 ```
 
-## Demo notebook
+## Notebooks
 
-See `notebooks/demo_spy_regime_detection.py` for a full example applying BOCPD to SPY daily returns. Convert to a Jupyter notebook with:
+Example notebooks live in `notebooks/` (as Jupytext `.py` files). Rendered versions are in [`docs/`](docs/):
 
-```bash
-make notebooks
-```
+- [SPY regime detection](docs/demo_spy_regime_detection.md) — univariate NIG model with predictive envelope
+- [Sensitivity analysis](docs/bocpd_experiments.md) — systematic sweep of λ, hazard shape, and prior strength
+- [Adams & MacKay Fig. 3 replication](docs/replicate_adams_mackay_fig3.md) — reproducing the original paper's well-log example
 
 ## Reference
 
