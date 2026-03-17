@@ -1,27 +1,31 @@
-.PHONY: install install-dev test lint format notebooks docs figures clean
+.PHONY: help install install-dev test lint format notebooks examples figures clean
 
-install:
+help: ## Show this help
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
+		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
+
+install: ## Install core + dev dependencies
 	uv sync
 
-install-dev:
+install-dev: ## Install dependencies and set up pre-commit hooks
 	uv sync
 	uv run pre-commit install
 
-test:
+test: ## Run test suite
 	uv run pytest tests/ -v
 
-lint:
+lint: ## Check code style (ruff check + format check)
 	uv run ruff check src/ tests/
 	uv run ruff format --check src/ tests/
 
-format:
+format: ## Auto-fix code style
 	uv run ruff check --fix src/ tests/
 	uv run ruff format src/ tests/
 
-notebooks:
+notebooks: ## Convert .py examples to .ipynb via jupytext
 	uv run jupytext --to ipynb examples/*.py
 
-docs: notebooks
+examples: notebooks ## Execute notebooks and render to examples/rendered/
 	@mkdir -p examples/rendered
 	@tmpdir=$$(mktemp -d) && \
 	for nb in examples/*.ipynb; do \
@@ -47,7 +51,7 @@ docs: notebooks
 	rm -rf "$$tmpdir"
 	@echo "Rendered notebooks to examples/rendered/"
 
-figures: notebooks
+figures: notebooks ## Extract figures to extracted_figures/
 	@mkdir -p extracted_figures
 	@tmpdir=$$(mktemp -d) && \
 	for nb in examples/*.ipynb; do \
@@ -74,7 +78,7 @@ figures: notebooks
 	rm -rf "$$tmpdir"
 	@echo "Figures extracted to extracted_figures/"
 
-clean:
+clean: ## Remove build artifacts and caches
 	rm -rf build/ dist/ *.egg-info src/*.egg-info
 	find . -type d -name __pycache__ -exec rm -rf {} +
 	rm -f extracted_figures/*.png extracted_figures/*.pdf
