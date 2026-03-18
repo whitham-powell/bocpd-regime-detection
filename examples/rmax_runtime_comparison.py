@@ -97,9 +97,9 @@ def rmax_label(r):
 # ## Experiment 1: Univariate NIG — r_max sweep
 #
 # Run BOCPD with `UnivariateNormalNIG` on 1D log returns across a
-# range of r_max values. The sequential NIG path is already fast
-# (no matrix ops), so we expect modest speedup here — this serves
-# mainly as a baseline and accuracy sanity check.
+# range of r_max values. The NIG path uses only scalar operations
+# (no matrix ops), so this serves as a baseline for comparison
+# with the multivariate case.
 
 # %%
 NIG_MU0 = 0.0
@@ -170,20 +170,24 @@ plt.show()
 # %% [markdown]
 # ### Reading experiment 1
 #
-# The univariate NIG path involves only scalar operations, so
-# run-length truncation provides modest speedup. The ERL curves
-# should overlay closely for r_max values larger than the typical
-# regime duration, confirming that truncation does not materially
-# affect detection quality.
+# Even in 1D, truncation yields a ~13x speedup (r_max=50 vs None),
+# with runtime scaling roughly linearly in r_max as expected.
+#
+# The ERL overlay reveals a clear accuracy tradeoff. r_max=50 and
+# r_max=100 diverge visibly from the untruncated run — they
+# cannot represent regimes longer than r_max, so the ERL is
+# capped and resets more frequently. r_max=200 and above track
+# the untruncated curve more closely, though minor differences
+# persist. r_max=800 is nearly indistinguishable from None.
 
 # %% [markdown]
 # ---
 # ## Experiment 2: Multivariate NIW — r_max sweep
 #
-# This is where the difference should be dramatic. Without r_max,
-# MultivariateNormalNIW uses a sequential loop over all active
-# run lengths -- each step involves DxD matrix operations. With
-# r_max set, BOCPD switches to the vectorized `_NIWBatch` path.
+# Without r_max, MultivariateNormalNIW uses a sequential loop
+# over all active run lengths -- each step involves DxD matrix
+# operations. With r_max set, BOCPD switches to the vectorized
+# `_NIWBatch` path.
 
 # %%
 NIW_MU0 = X_5d.mean(axis=0)
@@ -255,17 +259,22 @@ plt.show()
 # %% [markdown]
 # ### Reading experiment 2
 #
-# Without r_max, the sequential NIW path must maintain and update
-# a separate DxD scatter matrix for every active run length -- up
-# to T of them by the end. With r_max, the vectorized batch path
-# caps the number of active models and uses efficient array
-# operations. The bar chart should show a dramatic reduction in
-# runtime for any finite r_max, with diminishing returns as r_max
-# grows past the typical regime length.
+# The speedup here is dramatic: r_max=None takes ~106s while any
+# finite r_max completes in under 1.3s — a ~280x speedup at
+# r_max=50. The difference dwarfs the univariate case because
+# the sequential NIW path maintains a separate DxD scatter
+# matrix for each of up to T active run lengths; the vectorized
+# batch path caps this at r_max models.
 #
-# The ERL overlay confirms that moderate r_max values (100-400)
-# produce nearly identical detection results to the untruncated
-# run.
+# Runtime among the finite r_max values scales modestly (0.37s
+# to 1.29s across a 16x range of r_max), confirming that the
+# dominant cost is the sequential-vs-vectorized path choice,
+# not the number of active models.
+#
+# The ERL overlay shows a similar accuracy pattern to experiment
+# 1: r_max=50 diverges noticeably, while r_max=200+ produce
+# ERL traces that are qualitatively similar to the untruncated
+# run, detecting the same major regime boundaries.
 
 # %% [markdown]
 # ---
@@ -363,14 +372,14 @@ plt.show()
 # %% [markdown]
 # ### Reading experiment 3
 #
-# The r_max=None curve should show clear quadratic growth: each new
-# observation requires updating all existing run-length hypotheses,
-# and this set grows linearly with T.
+# The r_max=None curve shows clear quadratic growth: runtime
+# increases from 1.8s at T=200 to 101s at T=1500 — roughly a
+# 56x increase for a 7.5x increase in T, consistent with O(T^2).
 #
-# The r_max=200 curve should grow roughly linearly: no matter how
-# long the series, the algorithm never maintains more than 200
-# active run-length hypotheses. The speedup factor increases with
-# T — at T=1500 we expect an order-of-magnitude difference or more.
+# The r_max=200 curve stays nearly flat (0.06s to 0.55s),
+# growing roughly linearly as expected when the number of active
+# models is capped. The speedup factor increases with T: 31x at
+# T=200, 99x at T=800, and 185x at T=1500.
 
 # %% [markdown]
 # ---
@@ -378,21 +387,23 @@ plt.show()
 #
 # **Key takeaways:**
 #
-# 1. **Univariate NIG** — r_max provides modest speedup because
-#    scalar operations are already cheap. Useful mainly for very
-#    long series.
+# 1. **Univariate NIG** — r_max=50 yields ~13x speedup even
+#    for scalar operations. Useful whenever T is large.
 #
-# 2. **Multivariate NIW** — r_max provides dramatic speedup by
-#    switching from sequential DxD matrix updates to a vectorized
-#    batch path. This is the primary use case for r_max.
+# 2. **Multivariate NIW** — r_max triggers the vectorized batch
+#    path, producing ~280x speedup (106s to 0.37s at r_max=50).
+#    This is the primary use case for r_max.
 #
-# 3. **Scaling** — without r_max, runtime grows O(T²). With r_max,
-#    runtime grows O(T·r_max), which is effectively linear in T
-#    for fixed r_max. The gap widens with longer series.
+# 3. **Scaling** — the untruncated path grows quadratically
+#    (1.8s at T=200, 101s at T=1500). With r_max=200, runtime
+#    stays under 0.6s across all T values, with speedup
+#    increasing from 31x to 185x as T grows.
 #
-# 4. **Accuracy** — ERL curves are nearly identical for r_max
-#    values larger than the typical regime duration (~100-200 days
-#    for these datasets). Setting r_max to 2-4x the expected
-#    regime length is a safe default.
+# 4. **Accuracy tradeoff** — small r_max values (50, 100) produce
+#    visibly different ERL traces because they cannot represent
+#    long-lived regimes. r_max=200+ preserves the major regime
+#    boundaries and qualitative ERL shape while providing the
+#    bulk of the speedup. Choosing r_max at 2-4x the expected
+#    regime length balances speed and fidelity.
 
 # %%
