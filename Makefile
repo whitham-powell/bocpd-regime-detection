@@ -25,18 +25,27 @@ format: ## Auto-fix code style
 notebooks: ## Convert .py examples to .ipynb via jupytext
 	uv run jupytext --to ipynb examples/*.py
 
-examples: notebooks ## Execute notebooks and render to examples/rendered/
+examples: notebooks ## Execute notebooks and render to examples/rendered/ (NB=name to run one)
 	@mkdir -p examples/rendered
-	@tmpdir=$$(mktemp -d) && \
-	for nb in examples/*.ipynb; do \
-		if [ -f "$$nb" ]; then \
-			name=$$(basename "$$nb" .ipynb); \
-			echo "Executing $$name..."; \
-			uv run jupyter nbconvert "$$nb" \
-				--to notebook --execute \
-				--ExecutePreprocessor.timeout=600 \
-				--output-dir="$$tmpdir" || true; \
-		fi; \
+	@if [ -n "$(NB)" ]; then \
+		nb_files=""; \
+		for name in $(NB); do \
+			if [ ! -f "examples/$$name.ipynb" ]; then \
+				echo "Error: examples/$$name.ipynb not found" >&2; exit 1; \
+			fi; \
+			nb_files="$$nb_files examples/$$name.ipynb"; \
+		done; \
+	else \
+		nb_files=$$(ls examples/*.ipynb 2>/dev/null); \
+	fi && \
+	tmpdir=$$(mktemp -d) && \
+	for nb in $$nb_files; do \
+		name=$$(basename "$$nb" .ipynb); \
+		echo "Executing $$name..."; \
+		uv run jupyter nbconvert "$$nb" \
+			--to notebook --execute \
+			--ExecutePreprocessor.timeout=600 \
+			--output-dir="$$tmpdir" || true; \
 	done && \
 	for nb in "$$tmpdir"/*.ipynb; do \
 		if [ -f "$$nb" ]; then \
