@@ -7,6 +7,8 @@ at run length r. It encodes prior beliefs about regime duration.
 BOCPD expects a callable: hazard_fn(r) -> float in [0, 1].
 """
 
+from __future__ import annotations
+
 import numpy as np
 
 
@@ -48,6 +50,13 @@ class ConstantHazard:
         """
         return np.ones_like(r, dtype=float) / self.lam
 
+    def to_dict(self) -> dict:
+        return {"type": "ConstantHazard", "lam": self.lam}
+
+    @classmethod
+    def from_dict(cls, d: dict) -> ConstantHazard:
+        return cls(lam=d["lam"])
+
     def __repr__(self) -> str:
         return f"ConstantHazard(lam={self.lam})"
 
@@ -82,6 +91,13 @@ class IncreasingHazard:
         h = (self.shape / self.scale) * (r / self.scale) ** (self.shape - 1)
         return np.clip(h, 0.0, 1.0)
 
+    def to_dict(self) -> dict:
+        return {"type": "IncreasingHazard", "scale": self.scale, "shape": self.shape}
+
+    @classmethod
+    def from_dict(cls, d: dict) -> IncreasingHazard:
+        return cls(scale=d["scale"], shape=d["shape"])
+
     def __repr__(self) -> str:
         return f"IncreasingHazard(scale={self.scale}, shape={self.shape})"
 
@@ -115,5 +131,30 @@ class DecreasingHazard:
         h = self.a / (r + self.b)
         return np.clip(h, self.h_min, 1.0)
 
+    def to_dict(self) -> dict:
+        return {
+            "type": "DecreasingHazard",
+            "a": self.a,
+            "b": self.b,
+            "h_min": self.h_min,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> DecreasingHazard:
+        return cls(a=d["a"], b=d["b"], h_min=d["h_min"])
+
     def __repr__(self) -> str:
         return f"DecreasingHazard(a={self.a}, b={self.b}, h_min={self.h_min})"
+
+
+_HAZARD_REGISTRY = {
+    "ConstantHazard": ConstantHazard,
+    "IncreasingHazard": IncreasingHazard,
+    "DecreasingHazard": DecreasingHazard,
+}
+
+
+def hazard_from_dict(d: dict):
+    """Reconstruct a hazard function from its dict representation."""
+    cls = _HAZARD_REGISTRY[d["type"]]
+    return cls.from_dict(d)

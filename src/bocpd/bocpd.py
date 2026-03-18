@@ -18,10 +18,17 @@ Adams, R. P., & MacKay, D. J. C. (2007).
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import numpy as np
 
-from .hazard import ConstantHazard
-from .observation_model import MultivariateNormalNIW, _NIWBatch
+from .hazard import ConstantHazard, hazard_from_dict
+from .observation_model import (
+    MultivariateNormalNIW,
+    _NIWBatch,
+    model_from_dict,
+)
 
 
 class BOCPD:
@@ -64,6 +71,241 @@ class BOCPD:
         self.hazard_fn = hazard_fn or ConstantHazard(lam=200)
         self.r_max = r_max
 
+        # Internal state — initialized on first step() or run()
+        self._joint: np.ndarray | None = None
+        self._models: list | None = None  # sequential path
+        self._batch: _NIWBatch | None = None  # vectorized path
+        self._t: int = 0  # number of observations processed
+        self._use_vectorized: bool = False
+
+    def _is_initialized(self) -> bool:
+        return self._joint is not None
+
+    def _initialize(self) -> None:
+        """Set up initial state for online processing."""
+        probe = self.model_factory()
+        if isinstance(probe, MultivariateNormalNIW) and self.r_max is not None:
+            self._use_vectorized = True
+            self._joint = np.array([1.0])
+            self._batch = _NIWBatch(probe, capacity=self.r_max)
+            self._batch.prepend_fresh()
+            self._models = None
+        else:
+            self._use_vectorized = False
+            self._joint = np.array([1.0])
+            self._models = [self.model_factory()]
+            self._batch = None
+        self._t = 0
+
+    def step(self, x) -> dict:
+        """Ingest a single observation and return the current posterior summary.
+
+        Parameters
+        ----------
+        x : scalar or array-like
+            A single observation.
+
+        Returns
+        -------
+        dict with keys:
+            'change_point_prob' : float
+            'map_run_length' : int
+            'expected_run_length' : float
+            'predictive_mean' : float or nan
+            'predictive_var' : float or nan
+        """
+        if not self._is_initialized():
+            self._initialize()
+
+        if self._use_vectorized:
+            return self._step_vectorized(np.asarray(x, dtype=float))
+        return self._step_sequential(np.asarray(x, dtype=float))
+
+    def _step_sequential(self, x: np.ndarray) -> dict:
+        """One step of the sequential algorithm. Mutates internal state."""
+        joint = self._joint
+        models = self._models
+        n_run_lengths = len(joint)
+
+        # Step 0: Predictive envelope (univariate only)
+        pred_mean = np.nan
+        pred_var = np.nan
+        m0, _ = models[0].predictive_mean_var()
+        is_scalar = np.ndim(m0) == 0 and not np.isnan(m0)
+
+        if is_scalar:
+            means = np.zeros(n_run_lengths)
+            varis = np.zeros(n_run_lengths)
+            for r in range(n_run_lengths):
+                means[r], varis[r] = models[r].predictive_mean_var()
+
+            finite = np.isfinite(varis) & np.isfinite(means)
+            w = np.where(finite, joint, 0.0)
+            w_sum = np.sum(w)
+            if w_sum > 0:
+                w /= w_sum
+                m_fin = np.where(finite, means, 0.0)
+                v_fin = np.where(finite, varis, 0.0)
+                pred_mean = float(np.sum(w * m_fin))
+                pred_var = float(np.sum(w * (v_fin + m_fin**2)) - pred_mean**2)
+
+        # Step 1: Evaluate predictive probability
+        log_pred = np.zeros(n_run_lengths)
+        for r in range(n_run_lengths):
+            log_pred[r] = models[r].log_predictive(x)
+
+        # Step 2: Growth probabilities
+        run_lengths = np.arange(n_run_lengths)
+        H = self.hazard_fn(run_lengths)
+        growth = joint * np.exp(log_pred) * (1.0 - H)
+
+        # Step 3: Change point probability
+        changepoint = np.sum(joint * np.exp(log_pred) * H)
+
+        # Step 4: Assemble new joint
+        new_joint = np.empty(n_run_lengths + 1)
+        new_joint[0] = changepoint
+        new_joint[1:] = growth
+
+        # Step 5: Normalize
+        evidence = np.sum(new_joint)
+        if evidence > 0:
+            new_joint /= evidence
+        else:
+            new_joint = np.ones_like(new_joint) / len(new_joint)
+
+        # Step 6: Optional truncation
+        if self.r_max is not None and len(new_joint) > self.r_max:
+            new_joint = new_joint[: self.r_max]
+            total = np.sum(new_joint)
+            if total > 0:
+                new_joint /= total
+
+        # Step 7: Extract summary
+        cp_prob = float(new_joint[0])
+        map_rl = int(np.argmax(new_joint))
+        erl = float(np.sum(np.arange(len(new_joint)) * new_joint))
+
+        # Step 8: Update models
+        new_models = [self.model_factory()]
+        for r in range(min(len(models), len(new_joint) - 1)):
+            models[r].update(x)
+            new_models.append(models[r])
+
+        # Commit state
+        self._joint = new_joint
+        self._models = new_models
+        self._t += 1
+
+        return {
+            "change_point_prob": cp_prob,
+            "map_run_length": map_rl,
+            "expected_run_length": erl,
+            "predictive_mean": pred_mean,
+            "predictive_var": pred_var,
+        }
+
+    def _step_vectorized(self, x: np.ndarray) -> dict:
+        """One step of the vectorized algorithm. Mutates internal state."""
+        joint = self._joint
+        batch = self._batch
+        n_run_lengths = len(joint)
+
+        # Step 1: Predictive probability
+        log_pred = batch.log_predictive_all(x)
+
+        # Step 2: Growth probabilities
+        run_lengths = np.arange(n_run_lengths)
+        H = self.hazard_fn(run_lengths)
+        pred = np.exp(log_pred)
+        growth = joint * pred * (1.0 - H)
+
+        # Step 3: Change point probability
+        changepoint = np.sum(joint * pred * H)
+
+        # Step 4: Assemble new joint
+        new_joint = np.empty(n_run_lengths + 1)
+        new_joint[0] = changepoint
+        new_joint[1:] = growth
+
+        # Step 5: Normalize
+        evidence = np.sum(new_joint)
+        if evidence > 0:
+            new_joint /= evidence
+        else:
+            new_joint = np.ones_like(new_joint) / len(new_joint)
+
+        # Step 6: Truncation
+        if len(new_joint) > self.r_max:
+            new_joint = new_joint[: self.r_max]
+            total = np.sum(new_joint)
+            if total > 0:
+                new_joint /= total
+
+        # Step 7: Extract summary
+        cp_prob = float(new_joint[0])
+        map_rl = int(np.argmax(new_joint))
+        erl = float(np.sum(np.arange(len(new_joint)) * new_joint))
+
+        # Step 8: Update batch
+        n_survive = len(new_joint) - 1
+        batch.truncate(min(n_survive, batch.R))
+        batch.update_all(x)
+        batch.prepend_fresh()
+
+        # Commit state
+        self._joint = new_joint
+        self._t += 1
+
+        return {
+            "change_point_prob": cp_prob,
+            "map_run_length": map_rl,
+            "expected_run_length": erl,
+            "predictive_mean": np.nan,
+            "predictive_var": np.nan,
+        }
+
+    def warm_up(self, data: np.ndarray) -> dict:
+        """Process historical data, returning the batch result like run().
+
+        After warm_up(), the internal state is ready for continued
+        step()-by-step processing of new data.
+
+        Parameters
+        ----------
+        data : np.ndarray
+            Historical observations. Shape (T,) or (T, D).
+
+        Returns
+        -------
+        dict — same format as run().
+        """
+        T = len(data)
+        run_length_posterior = []
+        change_point_prob = np.zeros(T)
+        map_run_length = np.zeros(T, dtype=int)
+        expected_run_length = np.zeros(T)
+        predictive_mean = np.full(T, np.nan)
+        predictive_var = np.full(T, np.nan)
+
+        for t in range(T):
+            summary = self.step(data[t])
+            run_length_posterior.append(self._joint.copy())
+            change_point_prob[t] = summary["change_point_prob"]
+            map_run_length[t] = summary["map_run_length"]
+            expected_run_length[t] = summary["expected_run_length"]
+            predictive_mean[t] = summary["predictive_mean"]
+            predictive_var[t] = summary["predictive_var"]
+
+        return {
+            "run_length_posterior": run_length_posterior,
+            "change_point_prob": change_point_prob,
+            "map_run_length": map_run_length,
+            "expected_run_length": expected_run_length,
+            "predictive_mean": predictive_mean,
+            "predictive_var": predictive_var,
+        }
+
     def run(self, data: np.ndarray) -> dict:
         """Run BOCPD on a sequence of observations.
 
@@ -91,227 +333,124 @@ class BOCPD:
                 One-step-ahead predictive variance Var[x_t | x_{1:t-1}],
                 averaged over run lengths (includes mixture variance).
         """
-        probe = self.model_factory()
-        if isinstance(probe, MultivariateNormalNIW) and self.r_max is not None:
-            return self._run_vectorized(data, probe)
-        return self._run_sequential(data)
+        # Reset state so run() always starts fresh
+        self._joint = None
+        self._models = None
+        self._batch = None
+        self._t = 0
+        return self.warm_up(data)
 
-    def _run_sequential(self, data: np.ndarray) -> dict:
-        """Original sequential implementation close to Adams & MacKay (2007).
+    def save_state(self, path: str | Path) -> None:
+        """Serialize the current filter state to a JSON file.
 
-        Used for NIG, PoissonGamma, custom models, and when r_max is None.
-        Benefits from Step 1 slogdet caching in MultivariateNormalNIW
-        automatically.
+        Parameters
+        ----------
+        path : str or Path
+            Output file path. Will be created/overwritten.
         """
-        T = len(data)
+        if not self._is_initialized():
+            raise RuntimeError("No state to save — call step() or warm_up() first.")
 
-        # --- Storage ---
-        run_length_posterior = []
-        change_point_prob = np.zeros(T)
-        map_run_length = np.zeros(T, dtype=int)
-        expected_run_length = np.zeros(T)
-        predictive_mean = np.full(T, np.nan)
-        predictive_var = np.full(T, np.nan)
-
-        # --- Initialization ---
-        # At t=0, before seeing any data, we have a single run of length 0
-        # with probability 1. This is the "message" passed forward.
-        # joint[r] ∝ P(r_{t-1} = r, x_{1:t-1})
-        joint = np.array([1.0])  # P(r_0 = 0) = 1
-
-        # One observation model per hypothesized run length.
-        # models[r] has been updated with the data assigned to run length r.
-        models = [self.model_factory()]
-
-        # --- Main loop ---
-        for t in range(T):
-            x = data[t]
-            n_run_lengths = len(joint)
-
-            # Step 0: One-step-ahead predictive (before observing x_t)
-            # Mixture over run lengths: E[x_t] = sum_r P(r) * mu_r
-            # Var[x_t] = sum_r P(r) * (var_r + mu_r^2) - E[x_t]^2
-            # Only computed for univariate models (scalar mean/var).
-            #
-            # Some run lengths may have non-finite predictive moments
-            # (e.g. NIG with alpha <= 1 gives a Student-t with df <= 2,
-            # whose variance is infinite). These are excluded from the
-            # mixture and the weights renormalized over the remaining
-            # run lengths. At t=0, when only the fresh prior exists and
-            # it has infinite variance, no finite run lengths are
-            # available, so the predictive is left as NaN for that step.
-            m0, _ = models[0].predictive_mean_var()
-            is_scalar = np.ndim(m0) == 0 and not np.isnan(m0)
-
-            if is_scalar:
-                means = np.zeros(n_run_lengths)
-                varis = np.zeros(n_run_lengths)
-                for r in range(n_run_lengths):
-                    means[r], varis[r] = models[r].predictive_mean_var()
-
-                # Exclude run lengths with infinite variance (e.g. NIG
-                # with alpha <= 1 where the Student-t has no finite
-                # variance) and renormalize the weights.
-                finite = np.isfinite(varis) & np.isfinite(means)
-                w = np.where(finite, joint, 0.0)
-                w_sum = np.sum(w)
-                if w_sum > 0:
-                    w /= w_sum
-                    m_fin = np.where(finite, means, 0.0)
-                    v_fin = np.where(finite, varis, 0.0)
-                    predictive_mean[t] = np.sum(w * m_fin)
-                    predictive_var[t] = (
-                        np.sum(w * (v_fin + m_fin**2)) - predictive_mean[t] ** 2
-                    )
-
-            # Step 1: Evaluate predictive probability under each run length
-            log_pred = np.zeros(n_run_lengths)
-            for r in range(n_run_lengths):
-                log_pred[r] = models[r].log_predictive(x)
-
-            # Step 2: Compute growth probabilities
-            # P(r_t = r+1, x_{1:t}) = P(r_{t-1}=r, x_{1:t-1}) * pred * (1-H)
-            run_lengths = np.arange(n_run_lengths)
-            H = self.hazard_fn(run_lengths)
-
-            growth = joint * np.exp(log_pred) * (1.0 - H)
-
-            # Step 3: Compute change point probability (run length resets to 0)
-            # P(r_t = 0, x_{1:t}) = sum_r P(r_{t-1}=r, x_{1:t-1}) * pred * H
-            changepoint = np.sum(joint * np.exp(log_pred) * H)
-
-            # Step 4: Assemble new joint distribution
-            # new_joint[0] = changepoint mass
-            # new_joint[1:] = growth mass
-            new_joint = np.empty(n_run_lengths + 1)
-            new_joint[0] = changepoint
-            new_joint[1:] = growth
-
-            # Step 5: Normalize to get posterior
-            evidence = np.sum(new_joint)
-            if evidence > 0:
-                new_joint /= evidence
-            else:
-                # Numerical underflow — reset to uniform
-                new_joint = np.ones_like(new_joint) / len(new_joint)
-
-            # Step 6: Optional truncation
-            if self.r_max is not None and len(new_joint) > self.r_max:
-                new_joint = new_joint[: self.r_max]
-                total = np.sum(new_joint)
-                if total > 0:
-                    new_joint /= total
-
-            # Step 7: Store results
-            run_length_posterior.append(new_joint.copy())
-            change_point_prob[t] = new_joint[0]
-            map_run_length[t] = np.argmax(new_joint)
-            expected_run_length[t] = np.sum(np.arange(len(new_joint)) * new_joint)
-
-            # Step 8: Update observation models
-            # - Each existing model incorporates x (for its run length hypothesis)
-            # - A new model is prepended (for the r=0 hypothesis at next step)
-            new_models = [self.model_factory()]  # fresh model for new run
-            for r in range(min(len(models), len(new_joint) - 1)):
-                models[r].update(x)
-                new_models.append(models[r])
-
-            models = new_models
-            joint = new_joint
-
-        return {
-            "run_length_posterior": run_length_posterior,
-            "change_point_prob": change_point_prob,
-            "map_run_length": map_run_length,
-            "expected_run_length": expected_run_length,
-            "predictive_mean": predictive_mean,
-            "predictive_var": predictive_var,
+        state = {
+            "t": self._t,
+            "joint": self._joint.tolist(),
+            "r_max": self.r_max,
+            "use_vectorized": self._use_vectorized,
+            "hazard": self.hazard_fn.to_dict(),
         }
 
-    def _run_vectorized(self, data: np.ndarray, probe: MultivariateNormalNIW) -> dict:
-        """Vectorized implementation for MultivariateNormalNIW with r_max.
+        if self._use_vectorized:
+            state["batch"] = self._batch.to_dict()
+        else:
+            # Store model_factory recipe from first model (prior params)
+            # and per-model state
+            state["models"] = [m.to_dict() for m in self._models]
 
-        Same algorithm as _run_sequential, same output dict. All run-length
-        computations are batched — no Python loop over run lengths.
-        Predictive mean/var are left as NaN (multivariate model).
+        Path(path).write_text(json.dumps(state, indent=2))
+
+    @classmethod
+    def load_state(cls, path: str | Path) -> BOCPD:
+        """Load a previously saved filter state.
+
+        Parameters
+        ----------
+        path : str or Path
+            Path to a state file created by save_state().
+
+        Returns
+        -------
+        BOCPD
+            A fully initialized detector ready for step() calls.
         """
-        T = len(data)
+        state = json.loads(Path(path).read_text())
 
-        # --- Storage ---
-        run_length_posterior = []
-        change_point_prob = np.zeros(T)
-        map_run_length = np.zeros(T, dtype=int)
-        expected_run_length = np.zeros(T)
-        predictive_mean = np.full(T, np.nan)
-        predictive_var = np.full(T, np.nan)
+        hazard_fn = hazard_from_dict(state["hazard"])
+        r_max = state["r_max"]
 
-        # --- Initialization ---
-        joint = np.array([1.0])  # P(r_0 = 0) = 1
-        batch = _NIWBatch(probe, capacity=self.r_max)
-        batch.prepend_fresh()  # R=1, one fresh run at position 0
+        if state["use_vectorized"]:
+            batch_dict = state["batch"]
+            prior = batch_dict["prior"]
+            model_factory = lambda: MultivariateNormalNIW(  # noqa: E731
+                dim=prior["dim"],
+                mu0=np.array(prior["mu0"]),
+                kappa0=prior["kappa0"],
+                nu0=prior["nu0"],
+                Psi0=np.array(prior["Psi0"]),
+            )
+            obj = cls(
+                model_factory=model_factory,
+                hazard_fn=hazard_fn,
+                r_max=r_max,
+            )
+            obj._use_vectorized = True
+            obj._joint = np.array(state["joint"])
+            obj._batch = _NIWBatch.from_dict(batch_dict)
+            obj._models = None
+        else:
+            model_dicts = state["models"]
+            # Reconstruct factory from the first model's prior
+            first = model_dicts[0]
+            prior = first["prior"]
+            model_type = first["type"]
 
-        # --- Main loop ---
-        for t in range(T):
-            x = data[t]
-            n_run_lengths = len(joint)
+            if model_type == "UnivariateNormalNIG":
+                from .observation_model import UnivariateNormalNIG
 
-            # Step 0: Predictive envelope skipped (multivariate)
+                model_factory = lambda: UnivariateNormalNIG(  # noqa: E731
+                    mu0=prior["mu0"],
+                    kappa0=prior["kappa0"],
+                    alpha0=prior["alpha0"],
+                    beta0=prior["beta0"],
+                )
+            elif model_type == "MultivariateNormalNIW":
+                model_factory = lambda: MultivariateNormalNIW(  # noqa: E731
+                    dim=prior["dim"],
+                    mu0=np.array(prior["mu0"]),
+                    kappa0=prior["kappa0"],
+                    nu0=prior["nu0"],
+                    Psi0=np.array(prior["Psi0"]),
+                )
+            elif model_type == "PoissonGamma":
+                from .observation_model import PoissonGamma
 
-            # Step 1: Evaluate predictive probability under each run length
-            log_pred = batch.log_predictive_all(x)
-
-            # Step 2: Compute growth probabilities
-            run_lengths = np.arange(n_run_lengths)
-            H = self.hazard_fn(run_lengths)
-            pred = np.exp(log_pred)
-            growth = joint * pred * (1.0 - H)
-
-            # Step 3: Compute change point probability
-            changepoint = np.sum(joint * pred * H)
-
-            # Step 4: Assemble new joint distribution
-            new_joint = np.empty(n_run_lengths + 1)
-            new_joint[0] = changepoint
-            new_joint[1:] = growth
-
-            # Step 5: Normalize to get posterior
-            evidence = np.sum(new_joint)
-            if evidence > 0:
-                new_joint /= evidence
+                model_factory = lambda: PoissonGamma(  # noqa: E731
+                    alpha0=prior["alpha0"], beta0=prior["beta0"]
+                )
             else:
-                new_joint = np.ones_like(new_joint) / len(new_joint)
+                raise ValueError(f"Unknown model type: {model_type}")
 
-            # Step 6: Truncation
-            if len(new_joint) > self.r_max:
-                new_joint = new_joint[: self.r_max]
-                total = np.sum(new_joint)
-                if total > 0:
-                    new_joint /= total
+            obj = cls(
+                model_factory=model_factory,
+                hazard_fn=hazard_fn,
+                r_max=r_max,
+            )
+            obj._use_vectorized = False
+            obj._joint = np.array(state["joint"])
+            obj._models = [model_from_dict(d) for d in model_dicts]
+            obj._batch = None
 
-            # Step 7: Store results
-            run_length_posterior.append(new_joint.copy())
-            change_point_prob[t] = new_joint[0]
-            map_run_length[t] = np.argmax(new_joint)
-            expected_run_length[t] = np.sum(np.arange(len(new_joint)) * new_joint)
-
-            # Step 8: Update batch sufficient statistics
-            # Truncate to surviving run lengths, update, prepend fresh
-            n_survive = len(new_joint) - 1
-            batch.truncate(min(n_survive, batch.R))
-            batch.update_all(x)
-            batch.prepend_fresh()
-            # batch.R == len(new_joint) ✓
-
-            joint = new_joint
-
-        return {
-            "run_length_posterior": run_length_posterior,
-            "change_point_prob": change_point_prob,
-            "map_run_length": map_run_length,
-            "expected_run_length": expected_run_length,
-            "predictive_mean": predictive_mean,
-            "predictive_var": predictive_var,
-        }
+        obj._t = state["t"]
+        return obj
 
 
 # =============================================================================
