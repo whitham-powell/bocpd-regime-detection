@@ -849,10 +849,698 @@ class _NIWBatch:
         return obj
 
 
+# =============================================================================
+# Bernoulli with Beta Prior
+# =============================================================================
+
+
+class BernoulliBeta(ExponentialFamilyModel):
+    """Bernoulli likelihood with Beta conjugate prior on p.
+
+    Useful for detecting changes in binary event probability
+    (e.g., defect rates, click-through rates, alarm states).
+
+    Prior hyperparameters:
+        alpha0 : pseudo-count of successes
+        beta0  : pseudo-count of failures
+
+    Predictive distribution: Beta-Bernoulli.
+    """
+
+    def __init__(self, alpha0: float = 1.0, beta0: float = 1.0):
+        self.alpha = alpha0
+        self.beta = beta0
+        self._alpha0 = alpha0
+        self._beta0 = beta0
+
+    def sufficient_statistic(self, x: np.ndarray) -> dict:
+        return {"sum_x": float(x), "n": 1}
+
+    def log_base_measure(self, x: np.ndarray) -> float:
+        return 0.0
+
+    def log_normalizer(self, *, alpha, beta) -> float:
+        return gammaln(alpha) + gammaln(beta) - gammaln(alpha + beta)
+
+    def _get_params(self) -> dict:
+        return {"alpha": self.alpha, "beta": self.beta}
+
+    def _updated_params(self, stat: dict) -> dict:
+        return {
+            "alpha": self.alpha + stat["sum_x"],
+            "beta": self.beta + stat["n"] - stat["sum_x"],
+        }
+
+    def _set_params(self, params: dict) -> None:
+        self.alpha = params["alpha"]
+        self.beta = params["beta"]
+
+    def predictive_mean_var(self) -> tuple[float, float]:
+        """Beta-Bernoulli predictive mean and variance."""
+        s = self.alpha + self.beta
+        mean = self.alpha / s
+        var = self.alpha * self.beta / (s**2 * (s + 1.0))
+        return (mean, var)
+
+    def to_dict(self) -> dict:
+        return {
+            "type": "BernoulliBeta",
+            "prior": {"alpha0": self._alpha0, "beta0": self._beta0},
+            "state": {"alpha": self.alpha, "beta": self.beta},
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> BernoulliBeta:
+        prior = d["prior"]
+        obj = cls(alpha0=prior["alpha0"], beta0=prior["beta0"])
+        if "state" in d:
+            s = d["state"]
+            obj.alpha = s["alpha"]
+            obj.beta = s["beta"]
+        return obj
+
+
+# =============================================================================
+# Exponential with Gamma Prior
+# =============================================================================
+
+
+class ExponentialGamma(ExponentialFamilyModel):
+    """Exponential likelihood with Gamma conjugate prior on the rate.
+
+    Useful for detecting changes in event rates or durations
+    (e.g., time between failures, inter-arrival times).
+
+    Prior hyperparameters:
+        alpha0 : shape (pseudo-count of events)
+        beta0  : rate (pseudo-total of durations)
+
+    Predictive distribution: Lomax (Pareto Type II).
+    """
+
+    def __init__(self, alpha0: float = 1.0, beta0: float = 1.0):
+        self.alpha = alpha0
+        self.beta = beta0
+        self._alpha0 = alpha0
+        self._beta0 = beta0
+
+    def sufficient_statistic(self, x: np.ndarray) -> dict:
+        return {"sum_x": float(x), "n": 1}
+
+    def log_base_measure(self, x: np.ndarray) -> float:
+        return 0.0
+
+    def log_normalizer(self, *, alpha, beta) -> float:
+        return gammaln(alpha) - alpha * np.log(beta)
+
+    def _get_params(self) -> dict:
+        return {"alpha": self.alpha, "beta": self.beta}
+
+    def _updated_params(self, stat: dict) -> dict:
+        return {
+            "alpha": self.alpha + stat["n"],
+            "beta": self.beta + stat["sum_x"],
+        }
+
+    def _set_params(self, params: dict) -> None:
+        self.alpha = params["alpha"]
+        self.beta = params["beta"]
+
+    def predictive_mean_var(self) -> tuple[float, float]:
+        """Lomax (Pareto Type II) predictive mean and variance."""
+        mean = self.beta / (self.alpha - 1.0) if self.alpha > 1.0 else np.inf
+        var = (
+            self.beta**2 * self.alpha / ((self.alpha - 1.0) ** 2 * (self.alpha - 2.0))
+            if self.alpha > 2.0
+            else np.inf
+        )
+        return (mean, var)
+
+    def to_dict(self) -> dict:
+        return {
+            "type": "ExponentialGamma",
+            "prior": {"alpha0": self._alpha0, "beta0": self._beta0},
+            "state": {"alpha": self.alpha, "beta": self.beta},
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> ExponentialGamma:
+        prior = d["prior"]
+        obj = cls(alpha0=prior["alpha0"], beta0=prior["beta0"])
+        if "state" in d:
+            s = d["state"]
+            obj.alpha = s["alpha"]
+            obj.beta = s["beta"]
+        return obj
+
+
+# =============================================================================
+# Normal with Known Variance (unknown mean)
+# =============================================================================
+
+
+class NormalKnownVariance(ExponentialFamilyModel):
+    """Normal likelihood with known variance and Normal prior on the mean.
+
+    Detects changes in the mean while assuming constant variance.
+    Faster and sharper than NIG when variance is truly known.
+
+    Parameters:
+        mu0       : prior mean
+        sigma0_sq : prior variance on the mean
+        sigma2    : known observation variance
+
+    Working parameters: tau (precision = 1/posterior_var), mu (posterior mean).
+    Predictive distribution: Normal.
+    """
+
+    def __init__(
+        self,
+        mu0: float = 0.0,
+        sigma0_sq: float = 1.0,
+        sigma2: float = 1.0,
+    ):
+        self._mu0 = mu0
+        self._sigma0_sq = sigma0_sq
+        self._sigma2 = sigma2
+
+        self.tau = 1.0 / sigma0_sq
+        self.mu = mu0
+
+    def sufficient_statistic(self, x: np.ndarray) -> dict:
+        return {"x": float(x), "n": 1}
+
+    def log_base_measure(self, x: np.ndarray) -> float:
+        x = float(x)
+        return -0.5 * np.log(2 * np.pi * self._sigma2) - x**2 / (2 * self._sigma2)
+
+    def log_normalizer(self, *, tau, mu) -> float:
+        return -0.5 * np.log(tau) + 0.5 * tau * mu**2
+
+    def _get_params(self) -> dict:
+        return {"tau": self.tau, "mu": self.mu}
+
+    def _updated_params(self, stat: dict) -> dict:
+        tau_new = self.tau + stat["n"] / self._sigma2
+        mu_new = (self.tau * self.mu + stat["x"] / self._sigma2) / tau_new
+        return {"tau": tau_new, "mu": mu_new}
+
+    def _set_params(self, params: dict) -> None:
+        self.tau = params["tau"]
+        self.mu = params["mu"]
+
+    def predictive_mean_var(self) -> tuple[float, float]:
+        """Normal predictive mean and variance."""
+        return (self.mu, self._sigma2 + 1.0 / self.tau)
+
+    def to_dict(self) -> dict:
+        return {
+            "type": "NormalKnownVariance",
+            "prior": {
+                "mu0": self._mu0,
+                "sigma0_sq": self._sigma0_sq,
+                "sigma2": self._sigma2,
+            },
+            "state": {"tau": self.tau, "mu": self.mu},
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> NormalKnownVariance:
+        prior = d["prior"]
+        obj = cls(
+            mu0=prior["mu0"],
+            sigma0_sq=prior["sigma0_sq"],
+            sigma2=prior["sigma2"],
+        )
+        if "state" in d:
+            s = d["state"]
+            obj.tau = s["tau"]
+            obj.mu = s["mu"]
+        return obj
+
+
+# =============================================================================
+# Normal with Known Mean (unknown variance)
+# =============================================================================
+
+
+class NormalKnownMean(ExponentialFamilyModel):
+    """Normal likelihood with known mean and InverseGamma prior on variance.
+
+    Detects changes in variance (volatility) while assuming constant mean.
+
+    Parameters:
+        mu_known : known observation mean
+        alpha0   : InverseGamma shape
+        beta0    : InverseGamma scale
+
+    Predictive distribution: Student-t.
+    """
+
+    def __init__(
+        self,
+        mu_known: float = 0.0,
+        alpha0: float = 1.0,
+        beta0: float = 1.0,
+    ):
+        self._mu_known = mu_known
+        self._alpha0 = alpha0
+        self._beta0 = beta0
+
+        self.alpha = alpha0
+        self.beta = beta0
+
+    def sufficient_statistic(self, x: np.ndarray) -> dict:
+        x = float(x)
+        return {"sq_dev": (x - self._mu_known) ** 2, "n": 1}
+
+    def log_base_measure(self, x: np.ndarray) -> float:
+        return -0.5 * np.log(2 * np.pi)
+
+    def log_normalizer(self, *, alpha, beta) -> float:
+        return gammaln(alpha) - alpha * np.log(beta)
+
+    def _get_params(self) -> dict:
+        return {"alpha": self.alpha, "beta": self.beta}
+
+    def _updated_params(self, stat: dict) -> dict:
+        return {
+            "alpha": self.alpha + 0.5 * stat["n"],
+            "beta": self.beta + 0.5 * stat["sq_dev"],
+        }
+
+    def _set_params(self, params: dict) -> None:
+        self.alpha = params["alpha"]
+        self.beta = params["beta"]
+
+    def predictive_mean_var(self) -> tuple[float, float]:
+        """Student-t predictive mean and variance."""
+        df = 2.0 * self.alpha
+        scale = self.beta / self.alpha
+        var = scale * df / (df - 2.0) if df > 2.0 else np.inf
+        return (self._mu_known, var)
+
+    def to_dict(self) -> dict:
+        return {
+            "type": "NormalKnownMean",
+            "prior": {
+                "mu_known": self._mu_known,
+                "alpha0": self._alpha0,
+                "beta0": self._beta0,
+            },
+            "state": {"alpha": self.alpha, "beta": self.beta},
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> NormalKnownMean:
+        prior = d["prior"]
+        obj = cls(
+            mu_known=prior["mu_known"],
+            alpha0=prior["alpha0"],
+            beta0=prior["beta0"],
+        )
+        if "state" in d:
+            s = d["state"]
+            obj.alpha = s["alpha"]
+            obj.beta = s["beta"]
+        return obj
+
+
+# =============================================================================
+# Geometric with Beta Prior
+# =============================================================================
+
+
+class GeometricBeta(ExponentialFamilyModel):
+    """Geometric likelihood with Beta conjugate prior on p.
+
+    Models the number of failures before the first success.
+    Detects changes in success probability.
+
+    Prior hyperparameters:
+        alpha0 : pseudo-count of successes
+        beta0  : pseudo-count of failures
+
+    Predictive distribution: Beta-Geometric.
+    """
+
+    def __init__(self, alpha0: float = 1.0, beta0: float = 1.0):
+        self.alpha = alpha0
+        self.beta = beta0
+        self._alpha0 = alpha0
+        self._beta0 = beta0
+
+    def sufficient_statistic(self, x: np.ndarray) -> dict:
+        return {"sum_x": int(x), "n": 1}
+
+    def log_base_measure(self, x: np.ndarray) -> float:
+        return 0.0
+
+    def log_normalizer(self, *, alpha, beta) -> float:
+        return gammaln(alpha) + gammaln(beta) - gammaln(alpha + beta)
+
+    def _get_params(self) -> dict:
+        return {"alpha": self.alpha, "beta": self.beta}
+
+    def _updated_params(self, stat: dict) -> dict:
+        return {
+            "alpha": self.alpha + stat["n"],
+            "beta": self.beta + stat["sum_x"],
+        }
+
+    def _set_params(self, params: dict) -> None:
+        self.alpha = params["alpha"]
+        self.beta = params["beta"]
+
+    def predictive_mean_var(self) -> tuple[float, float]:
+        """Beta-Geometric predictive mean and variance."""
+        mean = self.beta / (self.alpha - 1.0) if self.alpha > 1.0 else np.inf
+        var = (
+            self.alpha
+            * self.beta
+            * (self.alpha + self.beta - 1.0)
+            / ((self.alpha - 1.0) ** 2 * (self.alpha - 2.0))
+            if self.alpha > 2.0
+            else np.inf
+        )
+        return (mean, var)
+
+    def to_dict(self) -> dict:
+        return {
+            "type": "GeometricBeta",
+            "prior": {"alpha0": self._alpha0, "beta0": self._beta0},
+            "state": {"alpha": self.alpha, "beta": self.beta},
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> GeometricBeta:
+        prior = d["prior"]
+        obj = cls(alpha0=prior["alpha0"], beta0=prior["beta0"])
+        if "state" in d:
+            s = d["state"]
+            obj.alpha = s["alpha"]
+            obj.beta = s["beta"]
+        return obj
+
+
+# =============================================================================
+# Multinomial with Dirichlet Prior (Categorical)
+# =============================================================================
+
+
+class MultinomialDirichlet(ExponentialFamilyModel):
+    """Categorical/Multinomial likelihood with Dirichlet conjugate prior.
+
+    Inherently multivariate (K categories). For binary data (K=2),
+    BernoulliBeta is a simpler alternative.
+
+    Prior hyperparameters:
+        alpha0 : concentration parameters, shape (K,)
+
+    Observations are one-hot vectors (single categorical draw) or
+    count vectors (multiple draws from the same distribution).
+
+    Predictive distribution: Dirichlet-Multinomial (Polya).
+    """
+
+    def __init__(self, alpha0: np.ndarray | list[float]):
+        self._alpha0 = np.asarray(alpha0, dtype=float)
+        self.alpha = self._alpha0.copy()
+        self.K = len(self._alpha0)
+
+    def sufficient_statistic(self, x: np.ndarray) -> dict:
+        return {"counts": np.asarray(x, dtype=float)}
+
+    def log_base_measure(self, x: np.ndarray) -> float:
+        x = np.asarray(x, dtype=float)
+        n = np.sum(x)
+        return float(gammaln(n + 1) - np.sum(gammaln(x + 1)))
+
+    def log_normalizer(self, *, alpha) -> float:
+        return float(np.sum(gammaln(alpha)) - gammaln(np.sum(alpha)))
+
+    def _get_params(self) -> dict:
+        return {"alpha": self.alpha}
+
+    def _updated_params(self, stat: dict) -> dict:
+        return {"alpha": self.alpha + stat["counts"]}
+
+    def _set_params(self, params: dict) -> None:
+        self.alpha = params["alpha"]
+
+    def predictive_mean_var(self) -> tuple[np.ndarray, np.ndarray]:
+        """Dirichlet-Multinomial predictive mean and covariance."""
+        alpha_sum = np.sum(self.alpha)
+        p = self.alpha / alpha_sum
+        cov = (np.diag(p) - np.outer(p, p)) / (alpha_sum + 1.0)
+        return (p, cov)
+
+    def to_dict(self) -> dict:
+        return {
+            "type": "MultinomialDirichlet",
+            "prior": {"alpha0": self._alpha0.tolist()},
+            "state": {"alpha": self.alpha.tolist()},
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> MultinomialDirichlet:
+        prior = d["prior"]
+        obj = cls(alpha0=np.array(prior["alpha0"]))
+        if "state" in d:
+            obj.alpha = np.array(d["state"]["alpha"])
+        return obj
+
+
+# =============================================================================
+# Multivariate Normal with Known Covariance (unknown mean)
+# =============================================================================
+
+
+class MultivariateNormalKnownCov(ExponentialFamilyModel):
+    """Multivariate Normal with known covariance, Normal prior on mean.
+
+    Detects changes in the mean vector while assuming constant covariance.
+    Predictive distribution is Normal (not Student-t), giving sharper
+    detection when the covariance is truly known.
+
+    Parameters:
+        dim    : dimensionality
+        mu0    : prior mean vector (D,)
+        Sigma0 : prior covariance on the mean (D, D)
+        Sigma  : known observation covariance (D, D)
+
+    Working parameters: Lambda (precision matrix), mu (posterior mean).
+    """
+
+    def __init__(
+        self,
+        dim: int,
+        mu0: np.ndarray = None,
+        Sigma0: np.ndarray = None,
+        Sigma: np.ndarray = None,
+    ):
+        self.dim = dim
+        self._mu0 = mu0 if mu0 is not None else np.zeros(dim)
+        self._Sigma0 = Sigma0 if Sigma0 is not None else np.eye(dim)
+        self._Sigma = Sigma if Sigma is not None else np.eye(dim)
+
+        # Precompute observation precision and its log determinant
+        self._Sigma_inv = np.linalg.inv(self._Sigma)
+        _, self._log_det_Sigma = np.linalg.slogdet(self._Sigma)
+
+        # Working parameters: posterior precision and mean
+        self.Lambda = np.linalg.inv(self._Sigma0)
+        self.mu = self._mu0.copy()
+
+    def sufficient_statistic(self, x: np.ndarray) -> dict:
+        return {"x": np.asarray(x, dtype=float), "n": 1}
+
+    def log_base_measure(self, x: np.ndarray) -> float:
+        x = np.asarray(x, dtype=float)
+        D = self.dim
+        return (
+            -0.5 * D * np.log(2 * np.pi)
+            - 0.5 * self._log_det_Sigma
+            - 0.5 * float(x @ self._Sigma_inv @ x)
+        )
+
+    def log_normalizer(self, *, Lambda, mu) -> float:
+        sign, logdet = np.linalg.slogdet(Lambda)
+        if sign <= 0:
+            return -np.inf
+        return -0.5 * logdet + 0.5 * float(mu @ Lambda @ mu)
+
+    def _get_params(self) -> dict:
+        return {"Lambda": self.Lambda, "mu": self.mu}
+
+    def _updated_params(self, stat: dict) -> dict:
+        Lambda_new = self.Lambda + stat["n"] * self._Sigma_inv
+        mu_new = np.linalg.solve(
+            Lambda_new, self.Lambda @ self.mu + self._Sigma_inv @ stat["x"]
+        )
+        return {"Lambda": Lambda_new, "mu": mu_new}
+
+    def _set_params(self, params: dict) -> None:
+        self.Lambda = params["Lambda"]
+        self.mu = params["mu"]
+
+    def predictive_mean_var(self) -> tuple[np.ndarray, np.ndarray]:
+        """Normal predictive mean and covariance."""
+        cov = self._Sigma + np.linalg.inv(self.Lambda)
+        return (self.mu.copy(), cov)
+
+    def to_dict(self) -> dict:
+        return {
+            "type": "MultivariateNormalKnownCov",
+            "prior": {
+                "dim": self.dim,
+                "mu0": self._mu0.tolist(),
+                "Sigma0": self._Sigma0.tolist(),
+                "Sigma": self._Sigma.tolist(),
+            },
+            "state": {
+                "Lambda": self.Lambda.tolist(),
+                "mu": self.mu.tolist(),
+            },
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> MultivariateNormalKnownCov:
+        prior = d["prior"]
+        obj = cls(
+            dim=prior["dim"],
+            mu0=np.array(prior["mu0"]),
+            Sigma0=np.array(prior["Sigma0"]),
+            Sigma=np.array(prior["Sigma"]),
+        )
+        if "state" in d:
+            s = d["state"]
+            obj.Lambda = np.array(s["Lambda"])
+            obj.mu = np.array(s["mu"])
+        return obj
+
+
+# =============================================================================
+# Multivariate Normal with Known Mean (unknown covariance)
+# =============================================================================
+
+
+class MultivariateNormalKnownMean(ExponentialFamilyModel):
+    """Multivariate Normal with known mean, InverseWishart prior on covariance.
+
+    Detects changes in the covariance structure while assuming constant mean.
+    Useful for volatility regime detection in multivariate time series.
+
+    Parameters:
+        dim      : dimensionality
+        mu_known : known mean vector (D,)
+        nu0      : InverseWishart degrees of freedom (must be > D - 1)
+        Psi0     : InverseWishart scale matrix (D, D)
+
+    Predictive distribution: Multivariate Student-t.
+    """
+
+    def __init__(
+        self,
+        dim: int,
+        mu_known: np.ndarray = None,
+        nu0: float | None = None,
+        Psi0: np.ndarray = None,
+    ):
+        self.dim = dim
+        self._mu_known = mu_known if mu_known is not None else np.zeros(dim)
+        self._nu0 = nu0 if nu0 is not None else float(dim) + 1.0
+        self._Psi0 = Psi0 if Psi0 is not None else np.eye(dim)
+
+        if self._nu0 <= self.dim - 1:
+            raise ValueError(f"nu0 must be > dim - 1 = {self.dim - 1}, got {self._nu0}")
+
+        self.nu = self._nu0
+        self.Psi = self._Psi0.copy()
+
+    def sufficient_statistic(self, x: np.ndarray) -> dict:
+        x = np.asarray(x, dtype=float)
+        d = x - self._mu_known
+        return {"scatter": np.outer(d, d), "n": 1}
+
+    def log_base_measure(self, x: np.ndarray) -> float:
+        return -0.5 * self.dim * np.log(2 * np.pi)
+
+    def log_normalizer(self, *, nu, Psi) -> float:
+        D = self.dim
+        sign, logdet = np.linalg.slogdet(Psi)
+        if sign <= 0:
+            return -np.inf
+        return multigammaln(nu / 2.0, D) - (nu / 2.0) * logdet
+
+    def _get_params(self) -> dict:
+        return {"nu": self.nu, "Psi": self.Psi}
+
+    def _updated_params(self, stat: dict) -> dict:
+        return {
+            "nu": self.nu + stat["n"],
+            "Psi": self.Psi + stat["scatter"],
+        }
+
+    def _set_params(self, params: dict) -> None:
+        self.nu = params["nu"]
+        self.Psi = params["Psi"].copy()
+
+    def predictive_mean_var(self) -> tuple[np.ndarray, np.ndarray]:
+        """Multivariate Student-t predictive mean and covariance."""
+        D = self.dim
+        df = self.nu - D + 1.0
+        shape = self.Psi / df
+        cov = shape * df / (df - 2.0) if df > 2.0 else np.full((D, D), np.inf)
+        return (self._mu_known.copy(), cov)
+
+    def to_dict(self) -> dict:
+        return {
+            "type": "MultivariateNormalKnownMean",
+            "prior": {
+                "dim": self.dim,
+                "mu_known": self._mu_known.tolist(),
+                "nu0": self._nu0,
+                "Psi0": self._Psi0.tolist(),
+            },
+            "state": {
+                "nu": self.nu,
+                "Psi": self.Psi.tolist(),
+            },
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> MultivariateNormalKnownMean:
+        prior = d["prior"]
+        obj = cls(
+            dim=prior["dim"],
+            mu_known=np.array(prior["mu_known"]),
+            nu0=prior["nu0"],
+            Psi0=np.array(prior["Psi0"]),
+        )
+        if "state" in d:
+            s = d["state"]
+            obj.nu = s["nu"]
+            obj.Psi = np.array(s["Psi"])
+        return obj
+
+
+# =============================================================================
+# Model Registry
+# =============================================================================
+
 _MODEL_REGISTRY = {
     "UnivariateNormalNIG": UnivariateNormalNIG,
     "MultivariateNormalNIW": MultivariateNormalNIW,
     "PoissonGamma": PoissonGamma,
+    "BernoulliBeta": BernoulliBeta,
+    "ExponentialGamma": ExponentialGamma,
+    "NormalKnownVariance": NormalKnownVariance,
+    "NormalKnownMean": NormalKnownMean,
+    "GeometricBeta": GeometricBeta,
+    "MultinomialDirichlet": MultinomialDirichlet,
+    "MultivariateNormalKnownCov": MultivariateNormalKnownCov,
+    "MultivariateNormalKnownMean": MultivariateNormalKnownMean,
 }
 
 

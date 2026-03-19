@@ -410,34 +410,8 @@ class BOCPD:
             model_dicts = state["models"]
             # Reconstruct factory from the first model's prior
             first = model_dicts[0]
-            prior = first["prior"]
-            model_type = first["type"]
-
-            if model_type == "UnivariateNormalNIG":
-                from .observation_model import UnivariateNormalNIG
-
-                model_factory = lambda: UnivariateNormalNIG(  # noqa: E731
-                    mu0=prior["mu0"],
-                    kappa0=prior["kappa0"],
-                    alpha0=prior["alpha0"],
-                    beta0=prior["beta0"],
-                )
-            elif model_type == "MultivariateNormalNIW":
-                model_factory = lambda: MultivariateNormalNIW(  # noqa: E731
-                    dim=prior["dim"],
-                    mu0=np.array(prior["mu0"]),
-                    kappa0=prior["kappa0"],
-                    nu0=prior["nu0"],
-                    Psi0=np.array(prior["Psi0"]),
-                )
-            elif model_type == "PoissonGamma":
-                from .observation_model import PoissonGamma
-
-                model_factory = lambda: PoissonGamma(  # noqa: E731
-                    alpha0=prior["alpha0"], beta0=prior["beta0"]
-                )
-            else:
-                raise ValueError(f"Unknown model type: {model_type}")
+            prior_spec = {"type": first["type"], "prior": first["prior"]}
+            model_factory = lambda spec=prior_spec: model_from_dict(spec)  # noqa: E731
 
             obj = cls(
                 model_factory=model_factory,
