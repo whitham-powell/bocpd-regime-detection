@@ -18,8 +18,16 @@ import pytest
 
 from bocpd import (
     BOCPD,
+    BernoulliBeta,
     ConstantHazard,
+    ExponentialGamma,
+    GeometricBeta,
+    MultinomialDirichlet,
+    MultivariateNormalKnownCov,
+    MultivariateNormalKnownMean,
     MultivariateNormalNIW,
+    NormalKnownMean,
+    NormalKnownVariance,
     PoissonGamma,
     UnivariateNormalNIG,
 )
@@ -100,6 +108,153 @@ def _poisson_data():
     ).astype(float)
 
 
+def _bernoulli_config():
+    return {
+        "model_factory": lambda: BernoulliBeta(alpha0=1.0, beta0=1.0),
+        "hazard_fn": ConstantHazard(lam=100),
+        "r_max": None,
+    }
+
+
+def _bernoulli_data():
+    np.random.seed(42)
+    return np.concatenate(
+        [
+            np.random.binomial(1, 0.2, 100),
+            np.random.binomial(1, 0.8, 100),
+        ]
+    ).astype(float)
+
+
+def _exponential_config():
+    return {
+        "model_factory": lambda: ExponentialGamma(alpha0=1.0, beta0=1.0),
+        "hazard_fn": ConstantHazard(lam=100),
+        "r_max": None,
+    }
+
+
+def _exponential_data():
+    np.random.seed(42)
+    return np.concatenate(
+        [
+            np.random.exponential(1.0, 100),
+            np.random.exponential(0.2, 100),
+        ]
+    )
+
+
+def _normal_kv_config():
+    return {
+        "model_factory": lambda: NormalKnownVariance(
+            mu0=0.0, sigma0_sq=10.0, sigma2=1.0
+        ),
+        "hazard_fn": ConstantHazard(lam=100),
+        "r_max": None,
+    }
+
+
+def _normal_km_config():
+    return {
+        "model_factory": lambda: NormalKnownMean(mu_known=0.0, alpha0=1.0, beta0=1.0),
+        "hazard_fn": ConstantHazard(lam=100),
+        "r_max": None,
+    }
+
+
+def _normal_km_data():
+    np.random.seed(42)
+    return np.concatenate(
+        [
+            np.random.normal(0, 1, 100),
+            np.random.normal(0, 3, 100),
+        ]
+    )
+
+
+def _geometric_config():
+    return {
+        "model_factory": lambda: GeometricBeta(alpha0=1.0, beta0=1.0),
+        "hazard_fn": ConstantHazard(lam=100),
+        "r_max": None,
+    }
+
+
+def _geometric_data():
+    np.random.seed(42)
+    return np.concatenate(
+        [
+            np.random.geometric(0.3, 100) - 1,
+            np.random.geometric(0.8, 100) - 1,
+        ]
+    ).astype(float)
+
+
+def _multinomial_config():
+    return {
+        "model_factory": lambda: MultinomialDirichlet(alpha0=np.ones(3)),
+        "hazard_fn": ConstantHazard(lam=100),
+        "r_max": None,
+    }
+
+
+def _multinomial_data():
+    np.random.seed(42)
+    K = 3
+    probs1 = [0.7, 0.2, 0.1]
+    probs2 = [0.1, 0.2, 0.7]
+    return np.vstack(
+        [
+            np.eye(K)[np.random.choice(K, size=100, p=probs1)],
+            np.eye(K)[np.random.choice(K, size=100, p=probs2)],
+        ]
+    )
+
+
+def _mv_known_cov_config():
+    dim = 3
+    return {
+        "model_factory": lambda: MultivariateNormalKnownCov(
+            dim=dim, Sigma0=10.0 * np.eye(dim), Sigma=np.eye(dim)
+        ),
+        "hazard_fn": ConstantHazard(lam=100),
+        "r_max": None,
+    }
+
+
+def _mv_known_cov_data():
+    np.random.seed(42)
+    dim = 3
+    return np.vstack(
+        [
+            np.random.multivariate_normal([0, 0, 0], np.eye(dim), 100),
+            np.random.multivariate_normal([3, -2, 1], np.eye(dim), 100),
+        ]
+    )
+
+
+def _mv_known_mean_config():
+    dim = 2
+    return {
+        "model_factory": lambda: MultivariateNormalKnownMean(
+            dim=dim, nu0=float(dim) + 1, Psi0=np.eye(dim)
+        ),
+        "hazard_fn": ConstantHazard(lam=100),
+        "r_max": None,
+    }
+
+
+def _mv_known_mean_data():
+    np.random.seed(42)
+    dim = 2
+    return np.vstack(
+        [
+            np.random.multivariate_normal([0, 0], 0.5 * np.eye(dim), 100),
+            np.random.multivariate_normal([0, 0], 3.0 * np.eye(dim), 100),
+        ]
+    )
+
+
 # =============================================================================
 # Test: step-by-step equivalence with run()
 # =============================================================================
@@ -112,8 +267,29 @@ def _poisson_data():
         (_niw_sequential_config, _multivariate_data),
         (_niw_vectorized_config, _multivariate_data),
         (_poisson_config, _poisson_data),
+        (_bernoulli_config, _bernoulli_data),
+        (_exponential_config, _exponential_data),
+        (_normal_kv_config, _univariate_data),
+        (_normal_km_config, _normal_km_data),
+        (_geometric_config, _geometric_data),
+        (_multinomial_config, _multinomial_data),
+        (_mv_known_cov_config, _mv_known_cov_data),
+        (_mv_known_mean_config, _mv_known_mean_data),
     ],
-    ids=["NIG", "NIW-sequential", "NIW-vectorized", "PoissonGamma"],
+    ids=[
+        "NIG",
+        "NIW-sequential",
+        "NIW-vectorized",
+        "PoissonGamma",
+        "BernoulliBeta",
+        "ExponentialGamma",
+        "NormalKnownVariance",
+        "NormalKnownMean",
+        "GeometricBeta",
+        "MultinomialDirichlet",
+        "MVNormalKnownCov",
+        "MVNormalKnownMean",
+    ],
 )
 def test_step_matches_run(config_fn, data_fn):
     """Calling step() in a loop must produce identical results to run()."""
@@ -198,8 +374,20 @@ def test_step_matches_run(config_fn, data_fn):
         (_nig_config, _univariate_data),
         (_niw_vectorized_config, _multivariate_data),
         (_poisson_config, _poisson_data),
+        (_bernoulli_config, _bernoulli_data),
+        (_exponential_config, _exponential_data),
+        (_multinomial_config, _multinomial_data),
+        (_mv_known_cov_config, _mv_known_cov_data),
     ],
-    ids=["NIG", "NIW-vectorized", "PoissonGamma"],
+    ids=[
+        "NIG",
+        "NIW-vectorized",
+        "PoissonGamma",
+        "BernoulliBeta",
+        "ExponentialGamma",
+        "MultinomialDirichlet",
+        "MVNormalKnownCov",
+    ],
 )
 def test_warm_up_matches_run(config_fn, data_fn):
     """warm_up() must produce identical results to run()."""
@@ -236,8 +424,29 @@ def test_warm_up_matches_run(config_fn, data_fn):
         (_niw_sequential_config, _multivariate_data),
         (_niw_vectorized_config, _multivariate_data),
         (_poisson_config, _poisson_data),
+        (_bernoulli_config, _bernoulli_data),
+        (_exponential_config, _exponential_data),
+        (_normal_kv_config, _univariate_data),
+        (_normal_km_config, _normal_km_data),
+        (_geometric_config, _geometric_data),
+        (_multinomial_config, _multinomial_data),
+        (_mv_known_cov_config, _mv_known_cov_data),
+        (_mv_known_mean_config, _mv_known_mean_data),
     ],
-    ids=["NIG", "NIW-sequential", "NIW-vectorized", "PoissonGamma"],
+    ids=[
+        "NIG",
+        "NIW-sequential",
+        "NIW-vectorized",
+        "PoissonGamma",
+        "BernoulliBeta",
+        "ExponentialGamma",
+        "NormalKnownVariance",
+        "NormalKnownMean",
+        "GeometricBeta",
+        "MultinomialDirichlet",
+        "MVNormalKnownCov",
+        "MVNormalKnownMean",
+    ],
 )
 def test_checkpoint_roundtrip(config_fn, data_fn):
     """save_state + load_state + step must match running the full series."""
@@ -281,8 +490,28 @@ def test_checkpoint_roundtrip(config_fn, data_fn):
         (_nig_config, _univariate_data),
         (_niw_vectorized_config, _multivariate_data),
         (_poisson_config, _poisson_data),
+        (_bernoulli_config, _bernoulli_data),
+        (_exponential_config, _exponential_data),
+        (_normal_kv_config, _univariate_data),
+        (_normal_km_config, _normal_km_data),
+        (_geometric_config, _geometric_data),
+        (_multinomial_config, _multinomial_data),
+        (_mv_known_cov_config, _mv_known_cov_data),
+        (_mv_known_mean_config, _mv_known_mean_data),
     ],
-    ids=["NIG", "NIW-vectorized", "PoissonGamma"],
+    ids=[
+        "NIG",
+        "NIW-vectorized",
+        "PoissonGamma",
+        "BernoulliBeta",
+        "ExponentialGamma",
+        "NormalKnownVariance",
+        "NormalKnownMean",
+        "GeometricBeta",
+        "MultinomialDirichlet",
+        "MVNormalKnownCov",
+        "MVNormalKnownMean",
+    ],
 )
 def test_checkpoint_step_by_step_equivalence(config_fn, data_fn):
     """After checkpoint, step-by-step results must match full run exactly."""

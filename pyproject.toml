@@ -1,6 +1,6 @@
 [project]
 name = "bocpd"
-version = "0.2.0"
+version = "0.3.0"
 description = "Bayesian Online Change Point Detection (Adams & MacKay 2007)"
 authors = [{ name = "Elijah Whitham-Powell" }]
 readme = "README.md"
