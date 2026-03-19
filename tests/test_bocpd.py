@@ -311,11 +311,17 @@ def test_vectorized_matches_sequential():
     hazard = ConstantHazard(lam=80)
     r_max = 100
 
-    detector = BOCPD(model_factory=factory, hazard_fn=hazard, r_max=r_max)
+    # Force sequential path (r_max set, but override vectorized selection)
+    det_seq = BOCPD(model_factory=factory, hazard_fn=hazard, r_max=r_max)
+    det_seq._initialize()
+    det_seq._use_vectorized = False
+    det_seq._models = [factory()]
+    det_seq._batch = None
+    result_seq = det_seq.warm_up(data)
 
-    # Run both paths explicitly
-    result_seq = detector._run_sequential(data)
-    result_vec = detector._run_vectorized(data, factory())
+    # Vectorized path (r_max + NIW triggers it automatically)
+    det_vec = BOCPD(model_factory=factory, hazard_fn=hazard, r_max=r_max)
+    result_vec = det_vec.run(data)
 
     # Compare all numeric arrays
     np.testing.assert_allclose(

@@ -276,6 +276,40 @@ class UnivariateNormalNIG(ExponentialFamilyModel):
         var = scale * df / (df - 2.0) if df > 2.0 else np.inf
         return (mean, var)
 
+    def to_dict(self) -> dict:
+        return {
+            "type": "UnivariateNormalNIG",
+            "prior": {
+                "mu0": self._mu0,
+                "kappa0": self._kappa0,
+                "alpha0": self._alpha0,
+                "beta0": self._beta0,
+            },
+            "state": {
+                "mu": self.mu,
+                "kappa": self.kappa,
+                "alpha": self.alpha,
+                "beta": self.beta,
+            },
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> UnivariateNormalNIG:
+        prior = d["prior"]
+        obj = cls(
+            mu0=prior["mu0"],
+            kappa0=prior["kappa0"],
+            alpha0=prior["alpha0"],
+            beta0=prior["beta0"],
+        )
+        if "state" in d:
+            s = d["state"]
+            obj.mu = s["mu"]
+            obj.kappa = s["kappa"]
+            obj.alpha = s["alpha"]
+            obj.beta = s["beta"]
+        return obj
+
 
 # =============================================================================
 # Multivariate Normal with Normal-Inverse-Wishart Prior
@@ -487,6 +521,40 @@ class MultivariateNormalNIW(ExponentialFamilyModel):
         cov = shape * df / (df - 2.0) if df > 2.0 else np.full_like(shape, np.inf)
         return (mu_n, cov)
 
+    def to_dict(self) -> dict:
+        return {
+            "type": "MultivariateNormalNIW",
+            "prior": {
+                "dim": self.dim,
+                "mu0": self.mu0.tolist(),
+                "kappa0": self.kappa0,
+                "nu0": self.nu0,
+                "Psi0": self.Psi0.tolist(),
+            },
+            "state": {
+                "n": self.n,
+                "x_bar": self.x_bar.tolist(),
+                "S": self.S.tolist(),
+            },
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> MultivariateNormalNIW:
+        prior = d["prior"]
+        obj = cls(
+            dim=prior["dim"],
+            mu0=np.array(prior["mu0"]),
+            kappa0=prior["kappa0"],
+            nu0=prior["nu0"],
+            Psi0=np.array(prior["Psi0"]),
+        )
+        if "state" in d:
+            s = d["state"]
+            obj.n = s["n"]
+            obj.x_bar = np.array(s["x_bar"])
+            obj.S = np.array(s["S"])
+        return obj
+
 
 # =============================================================================
 # Poisson-Gamma (example conjugate model for count data)
@@ -544,6 +612,23 @@ class PoissonGamma(ExponentialFamilyModel):
         mean = self.alpha / self.beta
         var = self.alpha * (self.beta + 1.0) / (self.beta**2)
         return (mean, var)
+
+    def to_dict(self) -> dict:
+        return {
+            "type": "PoissonGamma",
+            "prior": {"alpha0": self._alpha0, "beta0": self._beta0},
+            "state": {"alpha": self.alpha, "beta": self.beta},
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> PoissonGamma:
+        prior = d["prior"]
+        obj = cls(alpha0=prior["alpha0"], beta0=prior["beta0"])
+        if "state" in d:
+            s = d["state"]
+            obj.alpha = s["alpha"]
+            obj.beta = s["beta"]
+        return obj
 
 
 # =============================================================================
@@ -721,3 +806,57 @@ class _NIWBatch:
         self.R = min(self.R, n)
         if self._cached_logdet is not None:
             self._cached_logdet = self._cached_logdet[: self.R]
+
+    def to_dict(self) -> dict:
+        R = self.R
+        return {
+            "type": "_NIWBatch",
+            "prior": {
+                "dim": self.D,
+                "mu0": self.mu0.tolist(),
+                "kappa0": self.kappa0,
+                "nu0": self.nu0,
+                "Psi0": self.Psi0.tolist(),
+            },
+            "state": {
+                "R": R,
+                "capacity": self.capacity,
+                "n": self.n[:R].tolist(),
+                "x_bar": self.x_bar[:R].tolist(),
+                "S": self.S[:R].tolist(),
+            },
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> _NIWBatch:
+        prior = d["prior"]
+        probe = MultivariateNormalNIW(
+            dim=prior["dim"],
+            mu0=np.array(prior["mu0"]),
+            kappa0=prior["kappa0"],
+            nu0=prior["nu0"],
+            Psi0=np.array(prior["Psi0"]),
+        )
+        s = d["state"]
+        obj = cls(probe, capacity=s["capacity"])
+        R = s["R"]
+        obj.R = R
+        obj.n[:R] = np.array(s["n"])
+        obj.x_bar[:R] = np.array(s["x_bar"])
+        obj.S[:R] = np.array(s["S"])
+        obj._cached_logdet = None
+        obj._staged_logdet = None
+        return obj
+
+
+_MODEL_REGISTRY = {
+    "UnivariateNormalNIG": UnivariateNormalNIG,
+    "MultivariateNormalNIW": MultivariateNormalNIW,
+    "PoissonGamma": PoissonGamma,
+}
+
+
+def model_from_dict(d: dict):
+    """Reconstruct an observation model from its dict representation."""
+    cls = _MODEL_REGISTRY[d["type"]]
+    return cls.from_dict(d)
