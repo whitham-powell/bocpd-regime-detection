@@ -26,9 +26,11 @@ from bocpd import (
     MultivariateNormalKnownCov,
     MultivariateNormalKnownMean,
     MultivariateNormalNIW,
+    MultivariateStudentTNIW,
     NormalKnownMean,
     NormalKnownVariance,
     PoissonGamma,
+    StudentTNIG,
     UnivariateNormalNIG,
 )
 
@@ -255,6 +257,58 @@ def _mv_known_mean_data():
     )
 
 
+def _student_t_nig_config():
+    return {
+        "model_factory": lambda: StudentTNIG(
+            nu=4.0, mu0=0.0, kappa0=0.1, alpha0=1.0, beta0=1.0
+        ),
+        "hazard_fn": ConstantHazard(lam=100),
+        "r_max": None,
+    }
+
+
+def _student_t_nig_data():
+    np.random.seed(42)
+    from scipy.stats import t as scipy_t_dist
+
+    return np.concatenate(
+        [
+            scipy_t_dist.rvs(df=4, loc=0, scale=1, size=100),
+            scipy_t_dist.rvs(df=4, loc=4, scale=1, size=100),
+        ]
+    )
+
+
+def _mv_student_t_niw_config():
+    dim = 2
+    return {
+        "model_factory": lambda: MultivariateStudentTNIW(
+            dim=dim, nu=4.0, kappa0=0.1, nu0=float(dim) + 1, Psi0=np.eye(dim)
+        ),
+        "hazard_fn": ConstantHazard(lam=100),
+        "r_max": None,
+    }
+
+
+def _mv_student_t_niw_data():
+    np.random.seed(42)
+    dim = 2
+
+    # MV Student-t via scale mixture
+    def _mv_t(mu, cov, nu, size):
+        D = len(mu)
+        w = np.random.gamma(nu / 2.0, 2.0 / nu, size=size)
+        z = np.random.multivariate_normal(np.zeros(D), cov, size=size)
+        return mu + z / np.sqrt(w)[:, None]
+
+    return np.vstack(
+        [
+            _mv_t(np.zeros(dim), np.eye(dim), 4.0, 100),
+            _mv_t(np.array([4.0, -3.0]), np.eye(dim), 4.0, 100),
+        ]
+    )
+
+
 # =============================================================================
 # Test: step-by-step equivalence with run()
 # =============================================================================
@@ -275,6 +329,8 @@ def _mv_known_mean_data():
         (_multinomial_config, _multinomial_data),
         (_mv_known_cov_config, _mv_known_cov_data),
         (_mv_known_mean_config, _mv_known_mean_data),
+        (_student_t_nig_config, _student_t_nig_data),
+        (_mv_student_t_niw_config, _mv_student_t_niw_data),
     ],
     ids=[
         "NIG",
@@ -289,6 +345,8 @@ def _mv_known_mean_data():
         "MultinomialDirichlet",
         "MVNormalKnownCov",
         "MVNormalKnownMean",
+        "StudentTNIG",
+        "MVStudentTNIW",
     ],
 )
 def test_step_matches_run(config_fn, data_fn):
@@ -432,6 +490,8 @@ def test_warm_up_matches_run(config_fn, data_fn):
         (_multinomial_config, _multinomial_data),
         (_mv_known_cov_config, _mv_known_cov_data),
         (_mv_known_mean_config, _mv_known_mean_data),
+        (_student_t_nig_config, _student_t_nig_data),
+        (_mv_student_t_niw_config, _mv_student_t_niw_data),
     ],
     ids=[
         "NIG",
@@ -446,6 +506,8 @@ def test_warm_up_matches_run(config_fn, data_fn):
         "MultinomialDirichlet",
         "MVNormalKnownCov",
         "MVNormalKnownMean",
+        "StudentTNIG",
+        "MVStudentTNIW",
     ],
 )
 def test_checkpoint_roundtrip(config_fn, data_fn):
@@ -498,6 +560,8 @@ def test_checkpoint_roundtrip(config_fn, data_fn):
         (_multinomial_config, _multinomial_data),
         (_mv_known_cov_config, _mv_known_cov_data),
         (_mv_known_mean_config, _mv_known_mean_data),
+        (_student_t_nig_config, _student_t_nig_data),
+        (_mv_student_t_niw_config, _mv_student_t_niw_data),
     ],
     ids=[
         "NIG",
@@ -511,6 +575,8 @@ def test_checkpoint_roundtrip(config_fn, data_fn):
         "MultinomialDirichlet",
         "MVNormalKnownCov",
         "MVNormalKnownMean",
+        "StudentTNIG",
+        "MVStudentTNIW",
     ],
 )
 def test_checkpoint_step_by_step_equivalence(config_fn, data_fn):

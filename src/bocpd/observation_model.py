@@ -191,6 +191,11 @@ class UnivariateNormalNIG(ExponentialFamilyModel):
         df    = 2 * alpha
         loc   = mu
         scale = beta * (kappa + 1) / (alpha * kappa)
+
+    Note: The predictive df grows with sample size (df = 2*alpha, alpha
+    increases by 0.5 per observation), so tails lighten toward Gaussian
+    within each regime. For data with persistent heavy tails (e.g., stock
+    returns), use ``StudentTNIG`` instead, which fixes the tail index.
     """
 
     def __init__(
@@ -331,6 +336,11 @@ class MultivariateNormalNIW(ExponentialFamilyModel):
         df    = nu - D + 1
         loc   = mu
         shape = Psi * (kappa + 1) / (kappa * (nu - D + 1))
+
+    Note: The predictive df grows with sample size (df = nu_n - D + 1,
+    nu_n increases by 1 per observation), so tails lighten toward Gaussian
+    within each regime. For data with persistent heavy tails, use
+    ``MultivariateStudentTNIW`` instead, which fixes the tail index.
 
     Implementation uses Welford-style online sufficient statistics
     (n, x_bar, S) internally, and derives NIW posterior parameters from these
@@ -1526,6 +1536,339 @@ class MultivariateNormalKnownMean(ExponentialFamilyModel):
 
 
 # =============================================================================
+# Student-t with NIG Prior (univariate, persistent heavy tails)
+# =============================================================================
+
+
+class StudentTNIG(ObservationModel):
+    """Univariate Student-t via scale mixture of normals with NIG prior.
+
+    Models data with persistent heavy tails by writing the Student-t(nu)
+    distribution as a scale mixture of normals:
+
+        t(x | nu, mu, sigma^2) = int N(x | mu, sigma^2/w) Gamma(w | nu/2, nu/2) dw
+
+    Unlike ``UnivariateNormalNIG`` whose predictive df grows with sample size
+    (tails lighten toward Gaussian), this model fixes df = nu forever.
+    Outliers are automatically downweighted via the posterior expected
+    mixing weight E[w | x].
+
+    Parameters
+    ----------
+    nu : float
+        Fixed Student-t degrees of freedom (controls tail heaviness).
+        Lower values = heavier tails. Must be > 0.
+    mu0 : float
+        NIG prior mean.
+    kappa0 : float
+        NIG pseudo-observations for the mean.
+    alpha0 : float
+        NIG shape for inverse-gamma on variance.
+    beta0 : float
+        NIG scale for inverse-gamma on variance.
+    """
+
+    def __init__(
+        self,
+        nu: float = 4.0,
+        mu0: float = 0.0,
+        kappa0: float = 1.0,
+        alpha0: float = 1.0,
+        beta0: float = 1.0,
+    ):
+        if nu <= 0:
+            raise ValueError(f"nu must be > 0, got {nu}")
+        self.nu = nu
+
+        self.mu = mu0
+        self.kappa = kappa0
+        self.alpha = alpha0
+        self.beta = beta0
+
+        self._mu0 = mu0
+        self._kappa0 = kappa0
+        self._alpha0 = alpha0
+        self._beta0 = beta0
+
+    def log_predictive(self, x: np.ndarray) -> float:
+        """Exact Student-t predictive log-density with fixed df = nu."""
+        x = float(x)
+        nu = self.nu
+        scale = self.beta * (self.kappa + 1.0) / (self.alpha * self.kappa)
+        z2 = (x - self.mu) ** 2 / (nu * scale)
+
+        return (
+            gammaln((nu + 1.0) / 2.0)
+            - gammaln(nu / 2.0)
+            - 0.5 * np.log(nu * np.pi * scale)
+            - ((nu + 1.0) / 2.0) * np.log(1.0 + z2)
+        )
+
+    def update(self, x: np.ndarray) -> None:
+        """Weighted NIG update — outliers are automatically downweighted."""
+        x = float(x)
+        nu = self.nu
+
+        # Current variance estimate
+        sigma2_hat = self.beta / self.alpha
+        z2 = (x - self.mu) ** 2 / sigma2_hat
+
+        # Posterior expected mixing weight (downweights outliers)
+        w_hat = (nu + 1.0) / (nu + z2)
+
+        # Weighted NIG update
+        kappa_new = self.kappa + w_hat
+        mu_new = (self.kappa * self.mu + w_hat * x) / kappa_new
+        alpha_new = self.alpha + 0.5
+        beta_new = self.beta + 0.5 * w_hat * (x - self.mu) ** 2 * self.kappa / kappa_new
+
+        self.mu = mu_new
+        self.kappa = kappa_new
+        self.alpha = alpha_new
+        self.beta = beta_new
+
+    def predictive_mean_var(self) -> tuple[float, float]:
+        """Student-t predictive mean and variance with fixed df = nu."""
+        nu = self.nu
+        scale = self.beta * (self.kappa + 1.0) / (self.alpha * self.kappa)
+        mean = self.mu
+        var = scale * nu / (nu - 2.0) if nu > 2.0 else np.inf
+        return (mean, var)
+
+    def to_dict(self) -> dict:
+        return {
+            "type": "StudentTNIG",
+            "prior": {
+                "nu": self.nu,
+                "mu0": self._mu0,
+                "kappa0": self._kappa0,
+                "alpha0": self._alpha0,
+                "beta0": self._beta0,
+            },
+            "state": {
+                "mu": self.mu,
+                "kappa": self.kappa,
+                "alpha": self.alpha,
+                "beta": self.beta,
+            },
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> StudentTNIG:
+        prior = d["prior"]
+        obj = cls(
+            nu=prior["nu"],
+            mu0=prior["mu0"],
+            kappa0=prior["kappa0"],
+            alpha0=prior["alpha0"],
+            beta0=prior["beta0"],
+        )
+        if "state" in d:
+            s = d["state"]
+            obj.mu = s["mu"]
+            obj.kappa = s["kappa"]
+            obj.alpha = s["alpha"]
+            obj.beta = s["beta"]
+        return obj
+
+
+# =============================================================================
+# Multivariate Student-t with NIW Prior (persistent heavy tails)
+# =============================================================================
+
+
+class MultivariateStudentTNIW(ObservationModel):
+    """Multivariate Student-t via scale mixture of normals with NIW prior.
+
+    The multivariate analogue of ``StudentTNIG``. Fixes the predictive
+    degrees of freedom at ``nu`` regardless of sample size, unlike
+    ``MultivariateNormalNIW`` whose df grows with data.
+
+    Outliers (by Mahalanobis distance) are automatically downweighted
+    via the posterior expected mixing weight.
+
+    Parameters
+    ----------
+    dim : int
+        Dimensionality.
+    nu : float
+        Fixed Student-t degrees of freedom (tail heaviness). Must be > 0.
+    mu0 : np.ndarray, optional
+        NIW prior mean vector (D,). Defaults to zeros.
+    kappa0 : float
+        NIW pseudo-observations for the mean.
+    nu0 : float, optional
+        NIW degrees of freedom for inverse-Wishart. Must be > D - 1.
+        Defaults to D + 1.
+    Psi0 : np.ndarray, optional
+        NIW scale matrix (D, D). Defaults to identity.
+    """
+
+    def __init__(
+        self,
+        dim: int,
+        nu: float = 4.0,
+        mu0: np.ndarray = None,
+        kappa0: float = 1.0,
+        nu0: float | None = None,
+        Psi0: np.ndarray = None,
+    ):
+        if nu <= 0:
+            raise ValueError(f"nu must be > 0, got {nu}")
+        self.dim = dim
+        self.nu = nu
+
+        self.mu0 = mu0 if mu0 is not None else np.zeros(dim)
+        self.kappa0 = kappa0
+        self.nu0 = nu0 if nu0 is not None else float(dim) + 1.0
+        self.Psi0 = Psi0 if Psi0 is not None else np.eye(dim)
+
+        if self.nu0 <= self.dim - 1:
+            raise ValueError(f"nu0 must be > dim - 1 = {self.dim - 1}, got {self.nu0}")
+
+        # Welford sufficient statistics
+        self.n = 0.0
+        self.x_bar = np.zeros(dim)
+        self.S = np.zeros((dim, dim))
+
+    def _posterior_params(self):
+        """Derive NIW posterior parameters from sufficient statistics."""
+        kappa_n = self.kappa0 + self.n
+        nu_n = self.nu0 + self.n
+
+        if self.n == 0:
+            Psi_n = self.Psi0.copy()
+        else:
+            diff = self.x_bar - self.mu0
+            Psi_n = (
+                self.Psi0
+                + self.S
+                + (self.kappa0 * self.n / kappa_n) * np.outer(diff, diff)
+            )
+
+        mu_n = (self.kappa0 * self.mu0 + self.n * self.x_bar) / kappa_n
+        return kappa_n, nu_n, Psi_n, mu_n
+
+    def log_predictive(self, x: np.ndarray) -> float:
+        """Exact multivariate Student-t predictive with fixed df = nu."""
+        x = np.asarray(x, dtype=float)
+        D = self.dim
+        nu = self.nu
+
+        kappa_n, nu_n, Psi_n, mu_n = self._posterior_params()
+
+        Sigma_pred = Psi_n * (kappa_n + 1.0) / (kappa_n * nu)
+        delta = x - mu_n
+
+        # Use solve instead of inv for numerical stability
+        solved = np.linalg.solve(Sigma_pred, delta)
+        maha = float(delta @ solved)
+
+        sign, logdet = np.linalg.slogdet(Sigma_pred)
+        if sign <= 0:
+            return -np.inf
+
+        return (
+            gammaln((nu + D) / 2.0)
+            - gammaln(nu / 2.0)
+            - 0.5 * D * np.log(nu * np.pi)
+            - 0.5 * logdet
+            - ((nu + D) / 2.0) * np.log(1.0 + maha / nu)
+        )
+
+    def update(self, x: np.ndarray) -> None:
+        """Weighted Welford update — multivariate outliers downweighted."""
+        x = np.asarray(x, dtype=float)
+        D = self.dim
+        nu = self.nu
+
+        kappa_n, nu_n, Psi_n, mu_n = self._posterior_params()
+
+        # Posterior expected covariance
+        denom = nu_n - D - 1.0
+        Sigma_hat = Psi_n / denom if denom > 0 else Psi_n
+
+        # Mahalanobis distance
+        delta = x - mu_n
+        solved = np.linalg.solve(Sigma_hat, delta)
+        z2 = float(delta @ solved)
+
+        # Posterior expected mixing weight
+        w_hat = (nu + D) / (nu + z2)
+
+        # Weighted Welford update
+        n_new = self.n + w_hat
+        dx = x - self.x_bar
+        x_bar_new = self.x_bar + w_hat * dx / n_new
+        S_new = self.S + w_hat * (self.n / n_new) * np.outer(dx, dx)
+
+        self.n = n_new
+        self.x_bar = x_bar_new
+        self.S = S_new
+
+    def predictive_mean_var(self) -> tuple[np.ndarray, np.ndarray]:
+        """Multivariate Student-t predictive mean and covariance."""
+        D = self.dim
+        nu = self.nu
+
+        kappa_n, nu_n, Psi_n, mu_n = self._posterior_params()
+
+        Sigma_pred = Psi_n * (kappa_n + 1.0) / (kappa_n * nu)
+        cov = Sigma_pred * nu / (nu - 2.0) if nu > 2.0 else np.full((D, D), np.inf)
+        return (mu_n, cov)
+
+    def copy(self) -> MultivariateStudentTNIW:
+        """Efficient copy — avoid deepcopy of numpy arrays."""
+        new = MultivariateStudentTNIW.__new__(MultivariateStudentTNIW)
+        new.dim = self.dim
+        new.nu = self.nu
+        new.mu0 = self.mu0
+        new.kappa0 = self.kappa0
+        new.nu0 = self.nu0
+        new.Psi0 = self.Psi0
+        new.n = self.n
+        new.x_bar = self.x_bar.copy()
+        new.S = self.S.copy()
+        return new
+
+    def to_dict(self) -> dict:
+        return {
+            "type": "MultivariateStudentTNIW",
+            "prior": {
+                "dim": self.dim,
+                "nu": self.nu,
+                "mu0": self.mu0.tolist(),
+                "kappa0": self.kappa0,
+                "nu0": self.nu0,
+                "Psi0": self.Psi0.tolist(),
+            },
+            "state": {
+                "n": self.n,
+                "x_bar": self.x_bar.tolist(),
+                "S": self.S.tolist(),
+            },
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> MultivariateStudentTNIW:
+        prior = d["prior"]
+        obj = cls(
+            dim=prior["dim"],
+            nu=prior["nu"],
+            mu0=np.array(prior["mu0"]),
+            kappa0=prior["kappa0"],
+            nu0=prior["nu0"],
+            Psi0=np.array(prior["Psi0"]),
+        )
+        if "state" in d:
+            s = d["state"]
+            obj.n = s["n"]
+            obj.x_bar = np.array(s["x_bar"])
+            obj.S = np.array(s["S"])
+        return obj
+
+
+# =============================================================================
 # Model Registry
 # =============================================================================
 
@@ -1541,6 +1884,8 @@ _MODEL_REGISTRY = {
     "MultinomialDirichlet": MultinomialDirichlet,
     "MultivariateNormalKnownCov": MultivariateNormalKnownCov,
     "MultivariateNormalKnownMean": MultivariateNormalKnownMean,
+    "StudentTNIG": StudentTNIG,
+    "MultivariateStudentTNIW": MultivariateStudentTNIW,
 }
 
 
