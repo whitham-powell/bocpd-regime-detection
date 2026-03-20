@@ -26,11 +26,13 @@ from bocpd import (
     MultivariateNormalKnownCov,
     MultivariateNormalKnownMean,
     MultivariateNormalNIW,
-    MultivariateStudentTNIW,
+    MultivariateStudentTFixedDf,
+    MultivariateStudentTGridDf,
     NormalKnownMean,
     NormalKnownVariance,
     PoissonGamma,
-    StudentTNIG,
+    StudentTFixedDf,
+    StudentTGridDf,
     UnivariateNormalNIG,
 )
 
@@ -259,7 +261,7 @@ def _mv_known_mean_data():
 
 def _student_t_nig_config():
     return {
-        "model_factory": lambda: StudentTNIG(
+        "model_factory": lambda: StudentTFixedDf(
             nu=4.0, mu0=0.0, kappa0=0.1, alpha0=1.0, beta0=1.0
         ),
         "hazard_fn": ConstantHazard(lam=100),
@@ -282,7 +284,7 @@ def _student_t_nig_data():
 def _mv_student_t_niw_config():
     dim = 2
     return {
-        "model_factory": lambda: MultivariateStudentTNIW(
+        "model_factory": lambda: MultivariateStudentTFixedDf(
             dim=dim, nu=4.0, kappa0=0.1, nu0=float(dim) + 1, Psi0=np.eye(dim)
         ),
         "hazard_fn": ConstantHazard(lam=100),
@@ -309,6 +311,35 @@ def _mv_student_t_niw_data():
     )
 
 
+def _student_t_grid_config():
+    return {
+        "model_factory": lambda: StudentTGridDf(
+            nu_grid=[3.0, 5.0, 10.0],
+            mu0=0.0,
+            kappa0=0.1,
+            alpha0=2.0,
+            beta0=1.0,
+        ),
+        "hazard_fn": ConstantHazard(lam=100),
+        "r_max": None,
+    }
+
+
+def _mv_student_t_grid_config():
+    dim = 2
+    return {
+        "model_factory": lambda: MultivariateStudentTGridDf(
+            dim=dim,
+            nu_grid=[3.0, 5.0, 10.0],
+            kappa0=0.1,
+            nu0=float(dim) + 1,
+            Psi0=np.eye(dim),
+        ),
+        "hazard_fn": ConstantHazard(lam=100),
+        "r_max": None,
+    }
+
+
 # =============================================================================
 # Test: step-by-step equivalence with run()
 # =============================================================================
@@ -331,6 +362,8 @@ def _mv_student_t_niw_data():
         (_mv_known_mean_config, _mv_known_mean_data),
         (_student_t_nig_config, _student_t_nig_data),
         (_mv_student_t_niw_config, _mv_student_t_niw_data),
+        (_student_t_grid_config, _student_t_nig_data),
+        (_mv_student_t_grid_config, _mv_student_t_niw_data),
     ],
     ids=[
         "NIG",
@@ -345,8 +378,10 @@ def _mv_student_t_niw_data():
         "MultinomialDirichlet",
         "MVNormalKnownCov",
         "MVNormalKnownMean",
-        "StudentTNIG",
-        "MVStudentTNIW",
+        "StudentTFixedDf",
+        "MVStudentTFixedDf",
+        "StudentTGridDf",
+        "MVStudentTGridDf",
     ],
 )
 def test_step_matches_run(config_fn, data_fn):
@@ -492,6 +527,8 @@ def test_warm_up_matches_run(config_fn, data_fn):
         (_mv_known_mean_config, _mv_known_mean_data),
         (_student_t_nig_config, _student_t_nig_data),
         (_mv_student_t_niw_config, _mv_student_t_niw_data),
+        (_student_t_grid_config, _student_t_nig_data),
+        (_mv_student_t_grid_config, _mv_student_t_niw_data),
     ],
     ids=[
         "NIG",
@@ -506,8 +543,10 @@ def test_warm_up_matches_run(config_fn, data_fn):
         "MultinomialDirichlet",
         "MVNormalKnownCov",
         "MVNormalKnownMean",
-        "StudentTNIG",
-        "MVStudentTNIW",
+        "StudentTFixedDf",
+        "MVStudentTFixedDf",
+        "StudentTGridDf",
+        "MVStudentTGridDf",
     ],
 )
 def test_checkpoint_roundtrip(config_fn, data_fn):
@@ -562,6 +601,8 @@ def test_checkpoint_roundtrip(config_fn, data_fn):
         (_mv_known_mean_config, _mv_known_mean_data),
         (_student_t_nig_config, _student_t_nig_data),
         (_mv_student_t_niw_config, _mv_student_t_niw_data),
+        (_student_t_grid_config, _student_t_nig_data),
+        (_mv_student_t_grid_config, _mv_student_t_niw_data),
     ],
     ids=[
         "NIG",
@@ -575,8 +616,10 @@ def test_checkpoint_roundtrip(config_fn, data_fn):
         "MultinomialDirichlet",
         "MVNormalKnownCov",
         "MVNormalKnownMean",
-        "StudentTNIG",
-        "MVStudentTNIW",
+        "StudentTFixedDf",
+        "MVStudentTFixedDf",
+        "StudentTGridDf",
+        "MVStudentTGridDf",
     ],
 )
 def test_checkpoint_step_by_step_equivalence(config_fn, data_fn):
