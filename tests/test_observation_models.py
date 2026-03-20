@@ -4,6 +4,7 @@ detection, predictive_mean_var correctness, and analytical verification.
 """
 
 import numpy as np
+from scipy.stats import t as scipy_t
 
 from bocpd import (
     BOCPD,
@@ -14,8 +15,11 @@ from bocpd import (
     MultinomialDirichlet,
     MultivariateNormalKnownCov,
     MultivariateNormalKnownMean,
+    MultivariateStudentTNIW,
     NormalKnownMean,
     NormalKnownVariance,
+    StudentTNIG,
+    UnivariateNormalNIG,
     extract_change_points,
 )
 
@@ -372,3 +376,199 @@ def test_predictive_mean_var_mv_normal_known_mean():
     m2, v2 = model2.predictive_mean_var()
     assert np.all(np.isfinite(m2))
     assert np.all(np.isfinite(v2))
+
+
+# =============================================================================
+# StudentTNIG tests
+# =============================================================================
+
+
+def test_log_predictive_student_t_nig():
+    """Near-prior observation scores higher than far."""
+    model = StudentTNIG(nu=4.0, mu0=0.0, kappa0=1.0, alpha0=1.0, beta0=1.0)
+    lp_near = model.log_predictive(np.array(0.0))
+    lp_far = model.log_predictive(np.array(10.0))
+    assert lp_near > lp_far
+
+
+def test_student_t_nig_analytical():
+    """Verify log_predictive matches scipy.stats.t.logpdf at prior."""
+    nu = 5.0
+    mu0 = 2.0
+    kappa0 = 3.0
+    alpha0 = 4.0
+    beta0 = 2.0
+    model = StudentTNIG(nu=nu, mu0=mu0, kappa0=kappa0, alpha0=alpha0, beta0=beta0)
+
+    scale = beta0 * (kappa0 + 1.0) / (alpha0 * kappa0)
+    for x in [-3.0, 0.0, 2.0, 5.0, 20.0]:
+        expected = scipy_t.logpdf(x, df=nu, loc=mu0, scale=np.sqrt(scale))
+        actual = model.log_predictive(np.array(x))
+        np.testing.assert_allclose(actual, expected, atol=1e-12)
+
+
+def test_student_t_nig_analytical_after_updates():
+    """Verify log_predictive matches scipy after several updates."""
+    nu = 4.0
+    model = StudentTNIG(nu=nu, mu0=0.0, kappa0=1.0, alpha0=2.0, beta0=1.0)
+
+    np.random.seed(123)
+    for _ in range(10):
+        model.update(np.array(np.random.normal(1.0, 0.5)))
+
+    scale = model.beta * (model.kappa + 1.0) / (model.alpha * model.kappa)
+    for x in [-2.0, 0.0, 1.0, 5.0]:
+        expected = scipy_t.logpdf(x, df=nu, loc=model.mu, scale=np.sqrt(scale))
+        actual = model.log_predictive(np.array(x))
+        np.testing.assert_allclose(actual, expected, atol=1e-12)
+
+
+def test_student_t_nig_outlier_downweighting():
+    """Outlier moves StudentTNIG location less than UnivariateNormalNIG."""
+    np.random.seed(42)
+    inliers = np.random.normal(0, 1, 20)
+
+    # Build up both models on the same inliers
+    nig = UnivariateNormalNIG(mu0=0.0, kappa0=1.0, alpha0=1.0, beta0=1.0)
+    t_nig = StudentTNIG(nu=4.0, mu0=0.0, kappa0=1.0, alpha0=1.0, beta0=1.0)
+
+    for x in inliers:
+        nig.update(np.array(x))
+        t_nig.update(np.array(x))
+
+    mu_nig_before = nig.mu
+    mu_t_before = t_nig.mu
+
+    # Hit both with a massive outlier
+    outlier = np.array(100.0)
+    nig.update(outlier)
+    t_nig.update(outlier)
+
+    shift_nig = abs(nig.mu - mu_nig_before)
+    shift_t = abs(t_nig.mu - mu_t_before)
+
+    # StudentTNIG should move LESS
+    assert shift_t < shift_nig, (
+        f"StudentTNIG shifted {shift_t:.4f} vs NIG {shift_nig:.4f} — "
+        "expected StudentTNIG to be more robust"
+    )
+
+
+def test_student_t_nig_persistent_heavy_tails():
+    """After many observations, StudentTNIG keeps heavy tails while NIG thins."""
+    np.random.seed(42)
+    data = np.random.normal(0, 1, 200)
+
+    nig = UnivariateNormalNIG(mu0=0.0, kappa0=1.0, alpha0=1.0, beta0=1.0)
+    t_nig = StudentTNIG(nu=4.0, mu0=0.0, kappa0=1.0, alpha0=1.0, beta0=1.0)
+
+    for x in data:
+        nig.update(np.array(x))
+        t_nig.update(np.array(x))
+
+    _, var_nig = nig.predictive_mean_var()
+    _, var_t = t_nig.predictive_mean_var()
+
+    # NIG df = 2*alpha = 2*(1 + 200*0.5) = 202, almost Gaussian
+    # StudentTNIG df = 4, var = scale * 4/2 = 2*scale — much heavier
+    # The Student-t variance with df=4 should be meaningfully larger
+    assert var_t > var_nig, (
+        f"StudentTNIG var={var_t:.4f} should exceed NIG var={var_nig:.4f} "
+        "due to persistent heavy tails"
+    )
+
+
+def test_student_t_nig_synthetic_cp():
+    """Detect change point in Student-t data with mean shift."""
+    np.random.seed(42)
+    # Student-t(nu=4) data with mean shift at t=100
+    from scipy.stats import t as scipy_t_dist
+
+    data = np.concatenate(
+        [
+            scipy_t_dist.rvs(df=4, loc=0, scale=1, size=100),
+            scipy_t_dist.rvs(df=4, loc=4, scale=1, size=100),
+        ]
+    )
+    det = BOCPD(
+        model_factory=lambda: StudentTNIG(
+            nu=4.0, mu0=0.0, kappa0=0.1, alpha0=1.0, beta0=1.0
+        ),
+        hazard_fn=ConstantHazard(lam=100),
+    )
+    result = det.run(data)
+    _assert_cps_detected(result, [100])
+
+
+def test_predictive_mean_var_student_t_nig():
+    model = StudentTNIG(nu=4.0, mu0=0.0, kappa0=1.0, alpha0=1.0, beta0=1.0)
+    m, v = model.predictive_mean_var()
+    assert m == 0.0
+    assert np.isfinite(v) and v > 0  # nu=4 > 2 so var is finite
+
+    # nu <= 2 -> inf variance
+    model2 = StudentTNIG(nu=2.0, mu0=0.0, kappa0=1.0, alpha0=1.0, beta0=1.0)
+    _, v2 = model2.predictive_mean_var()
+    assert v2 == np.inf
+
+
+# =============================================================================
+# MultivariateStudentTNIW tests
+# =============================================================================
+
+
+def test_log_predictive_mv_student_t_niw():
+    """Near-prior observation scores higher than far."""
+    model = MultivariateStudentTNIW(dim=3, nu=4.0)
+    lp_near = model.log_predictive(np.zeros(3))
+    lp_far = model.log_predictive(np.ones(3) * 10)
+    assert lp_near > lp_far
+
+
+def test_mv_student_t_niw_synthetic_cp():
+    """Detect change point in multivariate Student-t data."""
+    np.random.seed(42)
+    dim = 2
+
+    # Generate MV Student-t by scale mixture: x = mu + z/sqrt(w), w ~ Gamma(nu/2, nu/2)
+    def mv_student_t(mu, cov, nu, size):
+        D = len(mu)
+        w = np.random.gamma(nu / 2.0, 2.0 / nu, size=size)
+        z = np.random.multivariate_normal(np.zeros(D), cov, size=size)
+        return mu + z / np.sqrt(w)[:, None]
+
+    data = np.vstack(
+        [
+            mv_student_t(np.zeros(dim), np.eye(dim), 4.0, 100),
+            mv_student_t(np.array([5.0, -4.0]), np.eye(dim), 4.0, 100),
+        ]
+    )
+    det = BOCPD(
+        model_factory=lambda: MultivariateStudentTNIW(
+            dim=dim, nu=4.0, kappa0=0.1, nu0=float(dim) + 1, Psi0=np.eye(dim)
+        ),
+        hazard_fn=ConstantHazard(lam=100),
+    )
+    result = det.run(data)
+    # Heavy-tailed data makes posterior_mass noisy; check ERL and MAP
+    for method in ["expected_run_length", "map_run_length"]:
+        detected = extract_change_points(result, method=method)
+        assert any(abs(int(d) - 100) <= CP_TOLERANCE for d in detected), (
+            f"[{method}] true CP 100 not detected within +/-{CP_TOLERANCE}; "
+            f"got {detected}"
+        )
+
+
+def test_predictive_mean_var_mv_student_t_niw():
+    dim = 3
+    model = MultivariateStudentTNIW(dim=dim, nu=4.0)
+    m, v = model.predictive_mean_var()
+    assert m.shape == (dim,)
+    assert v.shape == (dim, dim)
+    assert np.all(np.isfinite(m))
+    assert np.all(np.isfinite(v))  # nu=4 > 2
+
+    # nu <= 2 -> inf
+    model2 = MultivariateStudentTNIW(dim=dim, nu=2.0)
+    _, v2 = model2.predictive_mean_var()
+    assert np.all(np.isinf(v2))
