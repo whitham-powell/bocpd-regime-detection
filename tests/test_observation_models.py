@@ -15,10 +15,12 @@ from bocpd import (
     MultinomialDirichlet,
     MultivariateNormalKnownCov,
     MultivariateNormalKnownMean,
-    MultivariateStudentTNIW,
+    MultivariateStudentTFixedDf,
+    MultivariateStudentTGridDf,
     NormalKnownMean,
     NormalKnownVariance,
-    StudentTNIG,
+    StudentTFixedDf,
+    StudentTGridDf,
     UnivariateNormalNIG,
     extract_change_points,
 )
@@ -379,13 +381,13 @@ def test_predictive_mean_var_mv_normal_known_mean():
 
 
 # =============================================================================
-# StudentTNIG tests
+# StudentTFixedDf tests
 # =============================================================================
 
 
 def test_log_predictive_student_t_nig():
     """Near-prior observation scores higher than far."""
-    model = StudentTNIG(nu=4.0, mu0=0.0, kappa0=1.0, alpha0=1.0, beta0=1.0)
+    model = StudentTFixedDf(nu=4.0, mu0=0.0, kappa0=1.0, alpha0=1.0, beta0=1.0)
     lp_near = model.log_predictive(np.array(0.0))
     lp_far = model.log_predictive(np.array(10.0))
     assert lp_near > lp_far
@@ -398,7 +400,7 @@ def test_student_t_nig_analytical():
     kappa0 = 3.0
     alpha0 = 4.0
     beta0 = 2.0
-    model = StudentTNIG(nu=nu, mu0=mu0, kappa0=kappa0, alpha0=alpha0, beta0=beta0)
+    model = StudentTFixedDf(nu=nu, mu0=mu0, kappa0=kappa0, alpha0=alpha0, beta0=beta0)
 
     scale = beta0 * (kappa0 + 1.0) / (alpha0 * kappa0)
     for x in [-3.0, 0.0, 2.0, 5.0, 20.0]:
@@ -410,7 +412,7 @@ def test_student_t_nig_analytical():
 def test_student_t_nig_analytical_after_updates():
     """Verify log_predictive matches scipy after several updates."""
     nu = 4.0
-    model = StudentTNIG(nu=nu, mu0=0.0, kappa0=1.0, alpha0=2.0, beta0=1.0)
+    model = StudentTFixedDf(nu=nu, mu0=0.0, kappa0=1.0, alpha0=2.0, beta0=1.0)
 
     np.random.seed(123)
     for _ in range(10):
@@ -424,13 +426,13 @@ def test_student_t_nig_analytical_after_updates():
 
 
 def test_student_t_nig_outlier_downweighting():
-    """Outlier moves StudentTNIG location less than UnivariateNormalNIG."""
+    """Outlier moves StudentTFixedDf location less than UnivariateNormalNIG."""
     np.random.seed(42)
     inliers = np.random.normal(0, 1, 20)
 
     # Build up both models on the same inliers
     nig = UnivariateNormalNIG(mu0=0.0, kappa0=1.0, alpha0=1.0, beta0=1.0)
-    t_nig = StudentTNIG(nu=4.0, mu0=0.0, kappa0=1.0, alpha0=1.0, beta0=1.0)
+    t_nig = StudentTFixedDf(nu=4.0, mu0=0.0, kappa0=1.0, alpha0=1.0, beta0=1.0)
 
     for x in inliers:
         nig.update(np.array(x))
@@ -447,20 +449,20 @@ def test_student_t_nig_outlier_downweighting():
     shift_nig = abs(nig.mu - mu_nig_before)
     shift_t = abs(t_nig.mu - mu_t_before)
 
-    # StudentTNIG should move LESS
+    # StudentTFixedDf should move LESS
     assert shift_t < shift_nig, (
-        f"StudentTNIG shifted {shift_t:.4f} vs NIG {shift_nig:.4f} — "
-        "expected StudentTNIG to be more robust"
+        f"StudentTFixedDf shifted {shift_t:.4f} vs NIG {shift_nig:.4f} — "
+        "expected StudentTFixedDf to be more robust"
     )
 
 
 def test_student_t_nig_persistent_heavy_tails():
-    """After many observations, StudentTNIG keeps heavy tails while NIG thins."""
+    """After many observations, StudentTFixedDf keeps heavy tails while NIG thins."""
     np.random.seed(42)
     data = np.random.normal(0, 1, 200)
 
     nig = UnivariateNormalNIG(mu0=0.0, kappa0=1.0, alpha0=1.0, beta0=1.0)
-    t_nig = StudentTNIG(nu=4.0, mu0=0.0, kappa0=1.0, alpha0=1.0, beta0=1.0)
+    t_nig = StudentTFixedDf(nu=4.0, mu0=0.0, kappa0=1.0, alpha0=1.0, beta0=1.0)
 
     for x in data:
         nig.update(np.array(x))
@@ -470,10 +472,10 @@ def test_student_t_nig_persistent_heavy_tails():
     _, var_t = t_nig.predictive_mean_var()
 
     # NIG df = 2*alpha = 2*(1 + 200*0.5) = 202, almost Gaussian
-    # StudentTNIG df = 4, var = scale * 4/2 = 2*scale — much heavier
+    # StudentTFixedDf df = 4, var = scale * 4/2 = 2*scale — much heavier
     # The Student-t variance with df=4 should be meaningfully larger
     assert var_t > var_nig, (
-        f"StudentTNIG var={var_t:.4f} should exceed NIG var={var_nig:.4f} "
+        f"StudentTFixedDf var={var_t:.4f} should exceed NIG var={var_nig:.4f} "
         "due to persistent heavy tails"
     )
 
@@ -491,7 +493,7 @@ def test_student_t_nig_synthetic_cp():
         ]
     )
     det = BOCPD(
-        model_factory=lambda: StudentTNIG(
+        model_factory=lambda: StudentTFixedDf(
             nu=4.0, mu0=0.0, kappa0=0.1, alpha0=1.0, beta0=1.0
         ),
         hazard_fn=ConstantHazard(lam=100),
@@ -501,25 +503,25 @@ def test_student_t_nig_synthetic_cp():
 
 
 def test_predictive_mean_var_student_t_nig():
-    model = StudentTNIG(nu=4.0, mu0=0.0, kappa0=1.0, alpha0=1.0, beta0=1.0)
+    model = StudentTFixedDf(nu=4.0, mu0=0.0, kappa0=1.0, alpha0=1.0, beta0=1.0)
     m, v = model.predictive_mean_var()
     assert m == 0.0
     assert np.isfinite(v) and v > 0  # nu=4 > 2 so var is finite
 
     # nu <= 2 -> inf variance
-    model2 = StudentTNIG(nu=2.0, mu0=0.0, kappa0=1.0, alpha0=1.0, beta0=1.0)
+    model2 = StudentTFixedDf(nu=2.0, mu0=0.0, kappa0=1.0, alpha0=1.0, beta0=1.0)
     _, v2 = model2.predictive_mean_var()
     assert v2 == np.inf
 
 
 # =============================================================================
-# MultivariateStudentTNIW tests
+# MultivariateStudentTFixedDf tests
 # =============================================================================
 
 
 def test_log_predictive_mv_student_t_niw():
     """Near-prior observation scores higher than far."""
-    model = MultivariateStudentTNIW(dim=3, nu=4.0)
+    model = MultivariateStudentTFixedDf(dim=3, nu=4.0)
     lp_near = model.log_predictive(np.zeros(3))
     lp_far = model.log_predictive(np.ones(3) * 10)
     assert lp_near > lp_far
@@ -544,7 +546,7 @@ def test_mv_student_t_niw_synthetic_cp():
         ]
     )
     det = BOCPD(
-        model_factory=lambda: MultivariateStudentTNIW(
+        model_factory=lambda: MultivariateStudentTFixedDf(
             dim=dim, nu=4.0, kappa0=0.1, nu0=float(dim) + 1, Psi0=np.eye(dim)
         ),
         hazard_fn=ConstantHazard(lam=100),
@@ -561,7 +563,7 @@ def test_mv_student_t_niw_synthetic_cp():
 
 def test_predictive_mean_var_mv_student_t_niw():
     dim = 3
-    model = MultivariateStudentTNIW(dim=dim, nu=4.0)
+    model = MultivariateStudentTFixedDf(dim=dim, nu=4.0)
     m, v = model.predictive_mean_var()
     assert m.shape == (dim,)
     assert v.shape == (dim, dim)
@@ -569,6 +571,140 @@ def test_predictive_mean_var_mv_student_t_niw():
     assert np.all(np.isfinite(v))  # nu=4 > 2
 
     # nu <= 2 -> inf
-    model2 = MultivariateStudentTNIW(dim=dim, nu=2.0)
+    model2 = MultivariateStudentTFixedDf(dim=dim, nu=2.0)
     _, v2 = model2.predictive_mean_var()
     assert np.all(np.isinf(v2))
+
+
+# =============================================================================
+# StudentTGridDf tests
+# =============================================================================
+
+
+def test_log_predictive_grid_df():
+    model = StudentTGridDf(mu0=0.0, kappa0=1.0, alpha0=2.0, beta0=1.0)
+    lp_near = model.log_predictive(np.array(0.0))
+    lp_far = model.log_predictive(np.array(10.0))
+    assert lp_near > lp_far
+
+
+def test_grid_df_weight_concentration():
+    """Posterior weight should concentrate on the correct grid point."""
+    np.random.seed(42)
+    true_nu = 3.0
+    # Generate Student-t data with known nu
+    data = scipy_t.rvs(df=true_nu, loc=0, scale=1, size=200)
+
+    model = StudentTGridDf(
+        nu_grid=[2.0, 3.0, 5.0, 10.0, 30.0],
+        mu0=0.0,
+        kappa0=0.1,
+        alpha0=2.0,
+        beta0=1.0,
+    )
+    for x in data:
+        model.log_predictive(np.array(x))
+        model.update(np.array(x))
+
+    weights = np.exp(model._log_weights)
+    best_nu = model._nu_grid[np.argmax(weights)]
+    assert best_nu == true_nu, (
+        f"Expected weight to concentrate on nu={true_nu}, "
+        f"but best was nu={best_nu} (weights={weights})"
+    )
+
+
+def test_grid_df_estimated_nu():
+    model = StudentTGridDf(nu_grid=[2.0, 5.0, 10.0])
+    # Initially uniform, estimated_nu should be the mean
+    expected = (2.0 + 5.0 + 10.0) / 3.0
+    np.testing.assert_allclose(model.estimated_nu, expected, atol=1e-12)
+
+
+def test_grid_df_synthetic_cp():
+    np.random.seed(42)
+    data = np.concatenate(
+        [
+            scipy_t.rvs(df=3, loc=0, scale=1, size=100),
+            scipy_t.rvs(df=3, loc=4, scale=1, size=100),
+        ]
+    )
+    det = BOCPD(
+        model_factory=lambda: StudentTGridDf(
+            mu0=0.0, kappa0=0.1, alpha0=2.0, beta0=1.0
+        ),
+        hazard_fn=ConstantHazard(lam=100),
+    )
+    result = det.run(data)
+    _assert_cps_detected(result, [100])
+
+
+def test_grid_df_predictive_mean_var():
+    model = StudentTGridDf(
+        nu_grid=[3.0, 5.0, 10.0],
+        mu0=0.0,
+        kappa0=1.0,
+        alpha0=2.0,
+        beta0=1.0,
+    )
+    m, v = model.predictive_mean_var()
+    assert np.isfinite(m)
+    assert np.isfinite(v) and v > 0
+
+    for x in [1.0, -0.5, 2.0]:
+        model.log_predictive(np.array(x))
+        model.update(np.array(x))
+    m, v = model.predictive_mean_var()
+    assert np.isfinite(m)
+    assert np.isfinite(v) and v > 0
+
+
+# =============================================================================
+# MultivariateStudentTGridDf tests
+# =============================================================================
+
+
+def test_log_predictive_mv_grid_df():
+    model = MultivariateStudentTGridDf(dim=3)
+    lp_near = model.log_predictive(np.zeros(3))
+    lp_far = model.log_predictive(np.ones(3) * 10)
+    assert lp_near > lp_far
+
+
+def test_mv_grid_df_synthetic_cp():
+    np.random.seed(42)
+    dim = 3
+    data = np.vstack(
+        [
+            np.random.multivariate_normal([0, 0, 0], np.eye(dim), 150),
+            np.random.multivariate_normal([4, -3, 2], np.eye(dim), 150),
+        ]
+    )
+    det = BOCPD(
+        model_factory=lambda: MultivariateStudentTGridDf(
+            dim=dim,
+            nu_grid=[3.0, 5.0, 10.0],
+        ),
+        hazard_fn=ConstantHazard(lam=150),
+    )
+    result = det.run(data)
+    _assert_cps_detected(result, [150])
+
+
+def test_mv_grid_df_predictive_mean_var():
+    dim = 3
+    model = MultivariateStudentTGridDf(
+        dim=dim,
+        nu_grid=[3.0, 5.0, 10.0],
+    )
+    m, v = model.predictive_mean_var()
+    assert m.shape == (dim,)
+    assert v.shape == (dim, dim)
+
+    for _ in range(5):
+        x = np.random.randn(dim)
+        model.log_predictive(x)
+        model.update(x)
+    m, v = model.predictive_mean_var()
+    assert np.all(np.isfinite(m))
+    assert np.all(np.isfinite(v))

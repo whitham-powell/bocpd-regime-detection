@@ -1540,8 +1540,8 @@ class MultivariateNormalKnownMean(ExponentialFamilyModel):
 # =============================================================================
 
 
-class StudentTNIG(ObservationModel):
-    """Univariate Student-t via scale mixture of normals with NIG prior.
+class StudentTFixedDf(ObservationModel):
+    """Univariate Student-t with fixed (known) degrees of freedom.
 
     Models data with persistent heavy tails by writing the Student-t(nu)
     distribution as a scale mixture of normals:
@@ -1552,6 +1552,8 @@ class StudentTNIG(ObservationModel):
     (tails lighten toward Gaussian), this model fixes df = nu forever.
     Outliers are automatically downweighted via the posterior expected
     mixing weight E[w | x].
+
+    For unknown df, see ``StudentTGridDf`` which learns nu from data.
 
     Parameters
     ----------
@@ -1637,7 +1639,7 @@ class StudentTNIG(ObservationModel):
 
     def to_dict(self) -> dict:
         return {
-            "type": "StudentTNIG",
+            "type": "StudentTFixedDf",
             "prior": {
                 "nu": self.nu,
                 "mu0": self._mu0,
@@ -1654,7 +1656,7 @@ class StudentTNIG(ObservationModel):
         }
 
     @classmethod
-    def from_dict(cls, d: dict) -> StudentTNIG:
+    def from_dict(cls, d: dict) -> StudentTFixedDf:
         prior = d["prior"]
         obj = cls(
             nu=prior["nu"],
@@ -1673,19 +1675,21 @@ class StudentTNIG(ObservationModel):
 
 
 # =============================================================================
-# Multivariate Student-t with NIW Prior (persistent heavy tails)
+# Multivariate Student-t with Fixed Degrees of Freedom
 # =============================================================================
 
 
-class MultivariateStudentTNIW(ObservationModel):
-    """Multivariate Student-t via scale mixture of normals with NIW prior.
+class MultivariateStudentTFixedDf(ObservationModel):
+    """Multivariate Student-t with fixed (known) degrees of freedom.
 
-    The multivariate analogue of ``StudentTNIG``. Fixes the predictive
+    The multivariate analogue of ``StudentTFixedDf``. Fixes the predictive
     degrees of freedom at ``nu`` regardless of sample size, unlike
     ``MultivariateNormalNIW`` whose df grows with data.
 
     Outliers (by Mahalanobis distance) are automatically downweighted
     via the posterior expected mixing weight.
+
+    For unknown df, see ``MultivariateStudentTGridDf``.
 
     Parameters
     ----------
@@ -1755,7 +1759,7 @@ class MultivariateStudentTNIW(ObservationModel):
         D = self.dim
         nu = self.nu
 
-        kappa_n, nu_n, Psi_n, mu_n = self._posterior_params()
+        kappa_n, _nu_n, Psi_n, mu_n = self._posterior_params()
 
         Sigma_pred = Psi_n * (kappa_n + 1.0) / (kappa_n * nu)
         delta = x - mu_n
@@ -1782,7 +1786,7 @@ class MultivariateStudentTNIW(ObservationModel):
         D = self.dim
         nu = self.nu
 
-        kappa_n, nu_n, Psi_n, mu_n = self._posterior_params()
+        _kappa_n, nu_n, Psi_n, mu_n = self._posterior_params()
 
         # Posterior expected covariance
         denom = nu_n - D - 1.0
@@ -1811,15 +1815,15 @@ class MultivariateStudentTNIW(ObservationModel):
         D = self.dim
         nu = self.nu
 
-        kappa_n, nu_n, Psi_n, mu_n = self._posterior_params()
+        kappa_n, _nu_n, Psi_n, mu_n = self._posterior_params()
 
         Sigma_pred = Psi_n * (kappa_n + 1.0) / (kappa_n * nu)
         cov = Sigma_pred * nu / (nu - 2.0) if nu > 2.0 else np.full((D, D), np.inf)
         return (mu_n, cov)
 
-    def copy(self) -> MultivariateStudentTNIW:
+    def copy(self) -> MultivariateStudentTFixedDf:
         """Efficient copy — avoid deepcopy of numpy arrays."""
-        new = MultivariateStudentTNIW.__new__(MultivariateStudentTNIW)
+        new = MultivariateStudentTFixedDf.__new__(MultivariateStudentTFixedDf)
         new.dim = self.dim
         new.nu = self.nu
         new.mu0 = self.mu0
@@ -1833,7 +1837,7 @@ class MultivariateStudentTNIW(ObservationModel):
 
     def to_dict(self) -> dict:
         return {
-            "type": "MultivariateStudentTNIW",
+            "type": "MultivariateStudentTFixedDf",
             "prior": {
                 "dim": self.dim,
                 "nu": self.nu,
@@ -1850,7 +1854,7 @@ class MultivariateStudentTNIW(ObservationModel):
         }
 
     @classmethod
-    def from_dict(cls, d: dict) -> MultivariateStudentTNIW:
+    def from_dict(cls, d: dict) -> MultivariateStudentTFixedDf:
         prior = d["prior"]
         obj = cls(
             dim=prior["dim"],
@@ -1869,6 +1873,402 @@ class MultivariateStudentTNIW(ObservationModel):
 
 
 # =============================================================================
+# Student-t with Adaptive (Unknown) Degrees of Freedom — Base Class
+# =============================================================================
+
+
+class StudentTAdaptiveDf(ObservationModel, ABC):
+    """Abstract base for Student-t models that learn df from data.
+
+    Subclasses implement different estimation strategies for the
+    degrees of freedom parameter nu:
+
+    - ``StudentTGridDf``: discrete Bayesian model averaging over a
+      grid of candidate nu values (exact within grid resolution)
+    - ``StudentTOnlineEmDf``: online EM point estimate of nu
+      (lightweight, approximate) — not yet implemented
+
+    All subclasses share:
+    - NIG prior on (mu, sigma^2) within each nu hypothesis
+    - An ``estimated_nu`` property returning the current best estimate
+    """
+
+    @property
+    @abstractmethod
+    def estimated_nu(self) -> float:
+        """Current best estimate of the degrees of freedom."""
+
+
+class MultivariateStudentTAdaptiveDf(ObservationModel, ABC):
+    """Abstract base for multivariate Student-t models that learn df.
+
+    Subclasses implement different estimation strategies:
+
+    - ``MultivariateStudentTGridDf``: discrete Bayesian model averaging
+    - ``MultivariateStudentTOnlineEmDf``: online EM — not yet implemented
+    """
+
+    @property
+    @abstractmethod
+    def estimated_nu(self) -> float:
+        """Current best estimate of the degrees of freedom."""
+
+
+# =============================================================================
+# Student-t with Grid-Based Df Estimation (Univariate)
+# =============================================================================
+
+
+class StudentTGridDf(StudentTAdaptiveDf):
+    """Univariate Student-t with unknown df learned via grid model averaging.
+
+    Maintains a discrete set of candidate nu values, each backed by its
+    own ``StudentTFixedDf`` model. Posterior weights over the grid are
+    updated via Bayes rule at each observation, giving a full posterior
+    over nu.
+
+    Parameters
+    ----------
+    nu_grid : list of float, optional
+        Candidate df values. Default: ``[2.0, 3.0, 5.0, 10.0, 30.0]``,
+        covering heavy-tailed (nu=2) through near-Gaussian (nu=30).
+        Users may supply any list of positive floats to match their
+        domain (e.g., a denser grid around suspected values).
+    mu0, kappa0, alpha0, beta0 : float
+        NIG prior hyperparameters (shared across all grid points).
+    """
+
+    def __init__(
+        self,
+        nu_grid: list[float] | None = None,
+        mu0: float = 0.0,
+        kappa0: float = 1.0,
+        alpha0: float = 1.0,
+        beta0: float = 1.0,
+    ):
+        if nu_grid is None:
+            nu_grid = [2.0, 3.0, 5.0, 10.0, 30.0]
+        self._nu_grid = list(nu_grid)
+        self.K = len(self._nu_grid)
+        self._mu0 = mu0
+        self._kappa0 = kappa0
+        self._alpha0 = alpha0
+        self._beta0 = beta0
+
+        self._models = [
+            StudentTFixedDf(nu=nu, mu0=mu0, kappa0=kappa0, alpha0=alpha0, beta0=beta0)
+            for nu in self._nu_grid
+        ]
+        self._log_weights = np.full(self.K, -np.log(self.K))  # uniform
+
+        # Cache for log_predictive values (consumed by update)
+        self._cached_log_preds: np.ndarray | None = None
+
+    @property
+    def estimated_nu(self) -> float:
+        """Posterior-weighted expected nu."""
+        weights = np.exp(self._log_weights)
+        return float(np.dot(weights, self._nu_grid))
+
+    def log_predictive(self, x: np.ndarray) -> float:
+        log_preds = np.array([m.log_predictive(x) for m in self._models])
+        self._cached_log_preds = log_preds
+        # logsumexp: log(sum(w_k * pred_k))
+        return float(_logsumexp(self._log_weights + log_preds))
+
+    def update(self, x: np.ndarray) -> None:
+        # Update grid weights via Bayes rule
+        if self._cached_log_preds is not None:
+            log_preds = self._cached_log_preds
+            self._cached_log_preds = None
+        else:
+            log_preds = np.array([m.log_predictive(x) for m in self._models])
+
+        self._log_weights = self._log_weights + log_preds
+        self._log_weights -= _logsumexp(self._log_weights)
+
+        # Update each grid model
+        for m in self._models:
+            m.update(x)
+
+    def predictive_mean_var(self) -> tuple[float, float]:
+        weights = np.exp(self._log_weights)
+        means = np.zeros(self.K)
+        varis = np.zeros(self.K)
+        for k in range(self.K):
+            means[k], varis[k] = self._models[k].predictive_mean_var()
+
+        finite = np.isfinite(varis) & np.isfinite(means)
+        w = np.where(finite, weights, 0.0)
+        w_sum = np.sum(w)
+        if w_sum <= 0:
+            return (np.nan, np.nan)
+        w /= w_sum
+        m_fin = np.where(finite, means, 0.0)
+        v_fin = np.where(finite, varis, 0.0)
+        mean = float(np.sum(w * m_fin))
+        var = float(np.sum(w * (v_fin + m_fin**2)) - mean**2)
+        return (mean, var)
+
+    def copy(self) -> StudentTGridDf:
+        new = StudentTGridDf.__new__(StudentTGridDf)
+        new._nu_grid = self._nu_grid
+        new.K = self.K
+        new._mu0 = self._mu0
+        new._kappa0 = self._kappa0
+        new._alpha0 = self._alpha0
+        new._beta0 = self._beta0
+        new._models = [deepcopy(m) for m in self._models]
+        new._log_weights = self._log_weights.copy()
+        new._cached_log_preds = None
+        return new
+
+    def to_dict(self) -> dict:
+        return {
+            "type": "StudentTGridDf",
+            "prior": {
+                "nu_grid": self._nu_grid,
+                "mu0": self._mu0,
+                "kappa0": self._kappa0,
+                "alpha0": self._alpha0,
+                "beta0": self._beta0,
+            },
+            "state": {
+                "log_weights": self._log_weights.tolist(),
+                "models": [m.to_dict() for m in self._models],
+            },
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> StudentTGridDf:
+        prior = d["prior"]
+        obj = cls(
+            nu_grid=prior["nu_grid"],
+            mu0=prior["mu0"],
+            kappa0=prior["kappa0"],
+            alpha0=prior["alpha0"],
+            beta0=prior["beta0"],
+        )
+        if "state" in d:
+            s = d["state"]
+            obj._log_weights = np.array(s["log_weights"])
+            obj._models = [StudentTFixedDf.from_dict(md) for md in s["models"]]
+        return obj
+
+
+# =============================================================================
+# Multivariate Student-t with Grid-Based Df Estimation
+# =============================================================================
+
+
+class MultivariateStudentTGridDf(MultivariateStudentTAdaptiveDf):
+    """Multivariate Student-t with unknown df learned via grid model averaging.
+
+    Maintains a discrete set of candidate nu values, each backed by its
+    own ``MultivariateStudentTFixedDf`` model.
+
+    Parameters
+    ----------
+    dim : int
+        Dimensionality.
+    nu_grid : list of float, optional
+        Candidate df values. Default: ``[2.0, 3.0, 5.0, 10.0, 30.0]``.
+        See ``StudentTGridDf`` for guidance on choosing the grid.
+    mu0, kappa0, nu0, Psi0 :
+        NIW prior hyperparameters (shared across all grid points).
+    """
+
+    def __init__(
+        self,
+        dim: int,
+        nu_grid: list[float] | None = None,
+        mu0: np.ndarray = None,
+        kappa0: float = 1.0,
+        nu0: float | None = None,
+        Psi0: np.ndarray = None,
+    ):
+        if nu_grid is None:
+            nu_grid = [2.0, 3.0, 5.0, 10.0, 30.0]
+        self._nu_grid = list(nu_grid)
+        self.K = len(self._nu_grid)
+        self.dim = dim
+        self._mu0 = mu0
+        self._kappa0 = kappa0
+        self._nu0 = nu0
+        self._Psi0 = Psi0
+
+        self._models = [
+            MultivariateStudentTFixedDf(
+                dim=dim, nu=nu, mu0=mu0, kappa0=kappa0, nu0=nu0, Psi0=Psi0
+            )
+            for nu in self._nu_grid
+        ]
+        self._log_weights = np.full(self.K, -np.log(self.K))
+        self._cached_log_preds: np.ndarray | None = None
+
+    @property
+    def estimated_nu(self) -> float:
+        weights = np.exp(self._log_weights)
+        return float(np.dot(weights, self._nu_grid))
+
+    def log_predictive(self, x: np.ndarray) -> float:
+        log_preds = np.array([m.log_predictive(x) for m in self._models])
+        self._cached_log_preds = log_preds
+        return float(_logsumexp(self._log_weights + log_preds))
+
+    def update(self, x: np.ndarray) -> None:
+        if self._cached_log_preds is not None:
+            log_preds = self._cached_log_preds
+            self._cached_log_preds = None
+        else:
+            log_preds = np.array([m.log_predictive(x) for m in self._models])
+
+        self._log_weights = self._log_weights + log_preds
+        self._log_weights -= _logsumexp(self._log_weights)
+
+        for m in self._models:
+            m.update(x)
+
+    def predictive_mean_var(self) -> tuple[np.ndarray, np.ndarray]:
+        weights = np.exp(self._log_weights)
+        D = self.dim
+
+        # Mixture mean
+        mean = np.zeros(D)
+        for k in range(self.K):
+            mk, _ = self._models[k].predictive_mean_var()
+            if np.all(np.isfinite(mk)):
+                mean += weights[k] * mk
+
+        # Mixture covariance (law of total variance)
+        cov = np.zeros((D, D))
+        for k in range(self.K):
+            mk, vk = self._models[k].predictive_mean_var()
+            if np.all(np.isfinite(mk)) and np.all(np.isfinite(vk)):
+                cov += weights[k] * (vk + np.outer(mk, mk))
+        cov -= np.outer(mean, mean)
+
+        return (mean, cov)
+
+    def copy(self) -> MultivariateStudentTGridDf:
+        new = MultivariateStudentTGridDf.__new__(MultivariateStudentTGridDf)
+        new._nu_grid = self._nu_grid
+        new.K = self.K
+        new.dim = self.dim
+        new._mu0 = self._mu0
+        new._kappa0 = self._kappa0
+        new._nu0 = self._nu0
+        new._Psi0 = self._Psi0
+        new._models = [m.copy() for m in self._models]
+        new._log_weights = self._log_weights.copy()
+        new._cached_log_preds = None
+        return new
+
+    def to_dict(self) -> dict:
+        return {
+            "type": "MultivariateStudentTGridDf",
+            "prior": {
+                "dim": self.dim,
+                "nu_grid": self._nu_grid,
+                "mu0": self._mu0.tolist() if self._mu0 is not None else None,
+                "kappa0": self._kappa0,
+                "nu0": self._nu0,
+                "Psi0": self._Psi0.tolist() if self._Psi0 is not None else None,
+            },
+            "state": {
+                "log_weights": self._log_weights.tolist(),
+                "models": [m.to_dict() for m in self._models],
+            },
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> MultivariateStudentTGridDf:
+        prior = d["prior"]
+        obj = cls(
+            dim=prior["dim"],
+            nu_grid=prior["nu_grid"],
+            mu0=np.array(prior["mu0"]) if prior["mu0"] is not None else None,
+            kappa0=prior["kappa0"],
+            nu0=prior["nu0"],
+            Psi0=np.array(prior["Psi0"]) if prior["Psi0"] is not None else None,
+        )
+        if "state" in d:
+            s = d["state"]
+            obj._log_weights = np.array(s["log_weights"])
+            obj._models = [
+                MultivariateStudentTFixedDf.from_dict(md) for md in s["models"]
+            ]
+        return obj
+
+
+# =============================================================================
+# Student-t with Online EM Df Estimation — TODO
+# =============================================================================
+
+
+class StudentTOnlineEmDf(StudentTAdaptiveDf):
+    """Univariate Student-t with nu estimated via online EM.
+
+    Maintains a single point estimate of nu, updated each step via
+    the EM fixed-point iteration for the Student-t distribution.
+    Lighter than ``StudentTGridDf`` but gives a point estimate, not
+    a full posterior over nu.
+
+    .. note:: Not yet implemented.
+    """
+
+    def __init__(self, *args, **kwargs):
+        raise NotImplementedError(
+            "StudentTOnlineEmDf is planned but not yet implemented. "
+            "Use StudentTGridDf for adaptive df estimation."
+        )
+
+    @property
+    def estimated_nu(self) -> float:
+        raise NotImplementedError
+
+    def log_predictive(self, x: np.ndarray) -> float:
+        raise NotImplementedError
+
+    def update(self, x: np.ndarray) -> None:
+        raise NotImplementedError
+
+
+class MultivariateStudentTOnlineEmDf(MultivariateStudentTAdaptiveDf):
+    """Multivariate Student-t with nu estimated via online EM.
+
+    .. note:: Not yet implemented.
+    """
+
+    def __init__(self, *args, **kwargs):
+        raise NotImplementedError(
+            "MultivariateStudentTOnlineEmDf is planned but not yet implemented. "
+            "Use MultivariateStudentTGridDf for adaptive df estimation."
+        )
+
+    @property
+    def estimated_nu(self) -> float:
+        raise NotImplementedError
+
+    def log_predictive(self, x: np.ndarray) -> float:
+        raise NotImplementedError
+
+    def update(self, x: np.ndarray) -> None:
+        raise NotImplementedError
+
+
+# =============================================================================
+# Numerics
+# =============================================================================
+
+
+def _logsumexp(a: np.ndarray) -> float:
+    """Numerically stable log-sum-exp."""
+    a_max = np.max(a)
+    return float(a_max + np.log(np.sum(np.exp(a - a_max))))
+
+
+# =============================================================================
 # Model Registry
 # =============================================================================
 
@@ -1884,8 +2284,10 @@ _MODEL_REGISTRY = {
     "MultinomialDirichlet": MultinomialDirichlet,
     "MultivariateNormalKnownCov": MultivariateNormalKnownCov,
     "MultivariateNormalKnownMean": MultivariateNormalKnownMean,
-    "StudentTNIG": StudentTNIG,
-    "MultivariateStudentTNIW": MultivariateStudentTNIW,
+    "StudentTFixedDf": StudentTFixedDf,
+    "MultivariateStudentTFixedDf": MultivariateStudentTFixedDf,
+    "StudentTGridDf": StudentTGridDf,
+    "MultivariateStudentTGridDf": MultivariateStudentTGridDf,
 }
 
 
