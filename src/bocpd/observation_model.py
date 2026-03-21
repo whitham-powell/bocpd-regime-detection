@@ -25,9 +25,9 @@ from copy import deepcopy
 from typing import Any
 
 import numpy as np
-from scipy.special import (  # pyright: ignore[reportAttributeAccessIssue]
+from scipy.special import (
     gammaln,
-    multigammaln,
+    multigammaln,  # pyright: ignore[reportAttributeAccessIssue]
 )
 
 # =============================================================================
