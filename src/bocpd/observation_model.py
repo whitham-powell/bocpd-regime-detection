@@ -14,7 +14,7 @@ base class provides a generic implementation of log_predictive via the
 normalizing-constant ratio trick, so subclasses only need to define:
     - sufficient_statistic(x)
     - log_base_measure(x)
-    - log_normalizer(**params)
+    - log_normalizer(params)
     - _get_params() / _updated_params(stat)
 """
 
@@ -22,13 +22,75 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from copy import deepcopy
-from typing import Any
+from typing import TypedDict
 
 import numpy as np
 from scipy.special import (
     gammaln,
     multigammaln,  # pyright: ignore[reportAttributeAccessIssue]
 )
+
+
+class NIGParams(TypedDict):
+    """Normal-Inverse-Gamma: (mu, kappa, alpha, beta)."""
+
+    mu: float
+    kappa: float
+    alpha: float
+    beta: float
+
+
+class NIWParams(TypedDict):
+    """Normal-Inverse-Wishart: (kappa, nu, Psi)."""
+
+    kappa: float
+    nu: float
+    Psi: np.ndarray
+
+
+class GammaParams(TypedDict):
+    """Gamma / InverseGamma: (alpha, beta).
+
+    Shared by PoissonGamma, ExponentialGamma, and NormalKnownMean.
+    """
+
+    alpha: float
+    beta: float
+
+
+class BetaParams(TypedDict):
+    """Beta: (alpha, beta). Shared by BernoulliBeta and GeometricBeta."""
+
+    alpha: float
+    beta: float
+
+
+class NormalPrecisionParams(TypedDict):
+    """Normal prior on mean (precision parameterization): (tau, mu)."""
+
+    tau: float
+    mu: float
+
+
+class DirichletParams(TypedDict):
+    """Dirichlet: (alpha,) where alpha is a vector."""
+
+    alpha: np.ndarray
+
+
+class MVNormalPrecisionParams(TypedDict):
+    """Multivariate Normal prior on mean (precision parameterization)."""
+
+    Lambda: np.ndarray
+    mu: np.ndarray
+
+
+class InverseWishartParams(TypedDict):
+    """Inverse-Wishart: (nu, Psi)."""
+
+    nu: float
+    Psi: np.ndarray
+
 
 # =============================================================================
 # Base Interface — this is all BOCPD sees
@@ -131,13 +193,12 @@ class ExponentialFamilyModel(ObservationModel, ABC):
         """Compute log h(x), the base measure term."""
 
     @abstractmethod
-    def log_normalizer(self, **params: Any) -> float:
+    def log_normalizer(self, params: dict) -> float:
         """Log normalizing constant of the conjugate prior.
 
-        Subclasses define their own keyword arguments matching their
-        hyperparameter names. The base class calls this via
-        ``self.log_normalizer(**params_dict)`` where the dict comes
-        from ``_get_params()`` or ``_updated_params()``.
+        Subclasses narrow the ``params`` type to their specific TypedDict
+        (e.g. ``NIGParams``, ``NIWParams``). The base class calls this with
+        the dict returned by ``_get_params()`` or ``_updated_params()``.
         """
 
     @abstractmethod
@@ -162,8 +223,8 @@ class ExponentialFamilyModel(ObservationModel, ABC):
         stat = self.sufficient_statistic(x)
         new_params = self._updated_params(stat)
 
-        log_Z_new = self.log_normalizer(**new_params)
-        log_Z_cur = self.log_normalizer(**current_params)
+        log_Z_new = self.log_normalizer(new_params)
+        log_Z_cur = self.log_normalizer(current_params)
 
         return log_Z_new - log_Z_cur + self.log_base_measure(x)
 
@@ -229,7 +290,7 @@ class UnivariateNormalNIG(ExponentialFamilyModel):
     def log_base_measure(self, x: np.ndarray) -> float:
         return -0.5 * np.log(2 * np.pi)
 
-    def log_normalizer(self, **params: Any) -> float:
+    def log_normalizer(self, params: NIGParams) -> float:
         """Log normalizing constant of the NIG distribution.
 
         Params: mu, kappa, alpha, beta.
@@ -243,7 +304,7 @@ class UnivariateNormalNIG(ExponentialFamilyModel):
         alpha, beta, kappa = params["alpha"], params["beta"], params["kappa"]
         return gammaln(alpha) - alpha * np.log(beta) - 0.5 * np.log(kappa)
 
-    def _get_params(self) -> dict:
+    def _get_params(self) -> NIGParams:
         return {
             "mu": self.mu,
             "kappa": self.kappa,
@@ -251,7 +312,7 @@ class UnivariateNormalNIG(ExponentialFamilyModel):
             "beta": self.beta,
         }
 
-    def _updated_params(self, stat: dict) -> dict:
+    def _updated_params(self, stat: dict) -> NIGParams:
         x, n = stat["x"], stat["n"]
         kappa_new = self.kappa + n
         mu_new = (self.kappa * self.mu + n * x) / kappa_new
@@ -264,7 +325,7 @@ class UnivariateNormalNIG(ExponentialFamilyModel):
             "beta": beta_new,
         }
 
-    def _set_params(self, params: dict) -> None:
+    def _set_params(self, params: NIGParams) -> None:
         self.mu = params["mu"]
         self.kappa = params["kappa"]
         self.alpha = params["alpha"]
@@ -387,7 +448,7 @@ class MultivariateNormalNIW(ExponentialFamilyModel):
     def log_base_measure(self, x: np.ndarray) -> float:
         return -0.5 * self.dim * np.log(2 * np.pi)
 
-    def log_normalizer(self, **params: Any) -> float:
+    def log_normalizer(self, params: NIWParams) -> float:
         """Log normalizing constant of the NIW distribution.
 
         Params: kappa, nu, Psi.
@@ -415,7 +476,7 @@ class MultivariateNormalNIW(ExponentialFamilyModel):
             - (D / 2.0) * np.log(kappa)
         )
 
-    def _posterior_params(self, n, x_bar, S):
+    def _posterior_params(self, n, x_bar, S) -> NIWParams:
         """Derive NIW posterior parameters from sufficient statistics."""
         kappa_n = self.kappa0 + n
         nu_n = self.nu0 + n
@@ -428,10 +489,10 @@ class MultivariateNormalNIW(ExponentialFamilyModel):
 
         return {"kappa": kappa_n, "nu": nu_n, "Psi": Psi_n}
 
-    def _get_params(self) -> dict:
+    def _get_params(self) -> NIWParams:
         return self._posterior_params(self.n, self.x_bar, self.S)
 
-    def _updated_params(self, stat: dict) -> dict:
+    def _updated_params(self, stat: dict) -> NIWParams:
         """Compute what posterior params would be after incorporating x."""
         x = stat["x"]
 
@@ -464,7 +525,7 @@ class MultivariateNormalNIW(ExponentialFamilyModel):
                 logdet_cur,
             )
         else:
-            log_Z_cur = self.log_normalizer(**current_params)
+            log_Z_cur = self.log_normalizer(current_params)
 
         # Hypothetical log normalizer: always fresh, stash for reuse
         sign_new, logdet_new = np.linalg.slogdet(new_params["Psi"])
@@ -478,7 +539,7 @@ class MultivariateNormalNIW(ExponentialFamilyModel):
 
         return log_Z_new - log_Z_cur + self.log_base_measure(x)
 
-    def _set_params(self, params: dict) -> None:
+    def _set_params(self, params: NIWParams) -> None:
         """For NIW, we don't set params directly — we update sufficient stats.
 
         This is called by the generic ExponentialFamilyModel.update().
@@ -596,20 +657,20 @@ class PoissonGamma(ExponentialFamilyModel):
     def log_base_measure(self, x: np.ndarray) -> float:
         return float(-gammaln(int(x) + 1))  # -log(x!)
 
-    def log_normalizer(self, **params: Any) -> float:
+    def log_normalizer(self, params: GammaParams) -> float:
         alpha, beta = params["alpha"], params["beta"]
         return gammaln(alpha) - alpha * np.log(beta)
 
-    def _get_params(self) -> dict:
+    def _get_params(self) -> GammaParams:
         return {"alpha": self.alpha, "beta": self.beta}
 
-    def _updated_params(self, stat: dict) -> dict:
+    def _updated_params(self, stat: dict) -> GammaParams:
         return {
             "alpha": self.alpha + stat["sum_x"],
             "beta": self.beta + stat["n"],
         }
 
-    def _set_params(self, params: dict) -> None:
+    def _set_params(self, params: GammaParams) -> None:
         self.alpha = params["alpha"]
         self.beta = params["beta"]
 
@@ -890,20 +951,20 @@ class BernoulliBeta(ExponentialFamilyModel):
     def log_base_measure(self, x: np.ndarray) -> float:
         return 0.0
 
-    def log_normalizer(self, **params: Any) -> float:
+    def log_normalizer(self, params: BetaParams) -> float:
         alpha, beta = params["alpha"], params["beta"]
         return gammaln(alpha) + gammaln(beta) - gammaln(alpha + beta)
 
-    def _get_params(self) -> dict:
+    def _get_params(self) -> BetaParams:
         return {"alpha": self.alpha, "beta": self.beta}
 
-    def _updated_params(self, stat: dict) -> dict:
+    def _updated_params(self, stat: dict) -> BetaParams:
         return {
             "alpha": self.alpha + stat["sum_x"],
             "beta": self.beta + stat["n"] - stat["sum_x"],
         }
 
-    def _set_params(self, params: dict) -> None:
+    def _set_params(self, params: BetaParams) -> None:
         self.alpha = params["alpha"]
         self.beta = params["beta"]
 
@@ -962,20 +1023,20 @@ class ExponentialGamma(ExponentialFamilyModel):
     def log_base_measure(self, x: np.ndarray) -> float:
         return 0.0
 
-    def log_normalizer(self, **params: Any) -> float:
+    def log_normalizer(self, params: GammaParams) -> float:
         alpha, beta = params["alpha"], params["beta"]
         return gammaln(alpha) - alpha * np.log(beta)
 
-    def _get_params(self) -> dict:
+    def _get_params(self) -> GammaParams:
         return {"alpha": self.alpha, "beta": self.beta}
 
-    def _updated_params(self, stat: dict) -> dict:
+    def _updated_params(self, stat: dict) -> GammaParams:
         return {
             "alpha": self.alpha + stat["n"],
             "beta": self.beta + stat["sum_x"],
         }
 
-    def _set_params(self, params: dict) -> None:
+    def _set_params(self, params: GammaParams) -> None:
         self.alpha = params["alpha"]
         self.beta = params["beta"]
 
@@ -1047,19 +1108,19 @@ class NormalKnownVariance(ExponentialFamilyModel):
         xf = float(x)
         return -0.5 * np.log(2 * np.pi * self._sigma2) - xf**2 / (2 * self._sigma2)
 
-    def log_normalizer(self, **params: Any) -> float:
+    def log_normalizer(self, params: NormalPrecisionParams) -> float:
         tau, mu = params["tau"], params["mu"]
         return -0.5 * np.log(tau) + 0.5 * tau * mu**2
 
-    def _get_params(self) -> dict:
+    def _get_params(self) -> NormalPrecisionParams:
         return {"tau": self.tau, "mu": self.mu}
 
-    def _updated_params(self, stat: dict) -> dict:
+    def _updated_params(self, stat: dict) -> NormalPrecisionParams:
         tau_new = self.tau + stat["n"] / self._sigma2
         mu_new = (self.tau * self.mu + stat["x"] / self._sigma2) / tau_new
         return {"tau": tau_new, "mu": mu_new}
 
-    def _set_params(self, params: dict) -> None:
+    def _set_params(self, params: NormalPrecisionParams) -> None:
         self.tau = params["tau"]
         self.mu = params["mu"]
 
@@ -1131,20 +1192,20 @@ class NormalKnownMean(ExponentialFamilyModel):
     def log_base_measure(self, x: np.ndarray) -> float:
         return -0.5 * np.log(2 * np.pi)
 
-    def log_normalizer(self, **params: Any) -> float:
+    def log_normalizer(self, params: GammaParams) -> float:
         alpha, beta = params["alpha"], params["beta"]
         return gammaln(alpha) - alpha * np.log(beta)
 
-    def _get_params(self) -> dict:
+    def _get_params(self) -> GammaParams:
         return {"alpha": self.alpha, "beta": self.beta}
 
-    def _updated_params(self, stat: dict) -> dict:
+    def _updated_params(self, stat: dict) -> GammaParams:
         return {
             "alpha": self.alpha + 0.5 * stat["n"],
             "beta": self.beta + 0.5 * stat["sq_dev"],
         }
 
-    def _set_params(self, params: dict) -> None:
+    def _set_params(self, params: GammaParams) -> None:
         self.alpha = params["alpha"]
         self.beta = params["beta"]
 
@@ -1211,20 +1272,20 @@ class GeometricBeta(ExponentialFamilyModel):
     def log_base_measure(self, x: np.ndarray) -> float:
         return 0.0
 
-    def log_normalizer(self, **params: Any) -> float:
+    def log_normalizer(self, params: BetaParams) -> float:
         alpha, beta = params["alpha"], params["beta"]
         return gammaln(alpha) + gammaln(beta) - gammaln(alpha + beta)
 
-    def _get_params(self) -> dict:
+    def _get_params(self) -> BetaParams:
         return {"alpha": self.alpha, "beta": self.beta}
 
-    def _updated_params(self, stat: dict) -> dict:
+    def _updated_params(self, stat: dict) -> BetaParams:
         return {
             "alpha": self.alpha + stat["n"],
             "beta": self.beta + stat["sum_x"],
         }
 
-    def _set_params(self, params: dict) -> None:
+    def _set_params(self, params: BetaParams) -> None:
         self.alpha = params["alpha"]
         self.beta = params["beta"]
 
@@ -1292,17 +1353,17 @@ class MultinomialDirichlet(ExponentialFamilyModel):
         n = np.sum(x)
         return float(gammaln(n + 1) - np.sum(gammaln(x + 1)))
 
-    def log_normalizer(self, **params: Any) -> float:
+    def log_normalizer(self, params: DirichletParams) -> float:
         alpha = params["alpha"]
         return float(np.sum(gammaln(alpha)) - gammaln(np.sum(alpha)))
 
-    def _get_params(self) -> dict:
+    def _get_params(self) -> DirichletParams:
         return {"alpha": self.alpha}
 
-    def _updated_params(self, stat: dict) -> dict:
+    def _updated_params(self, stat: dict) -> DirichletParams:
         return {"alpha": self.alpha + stat["counts"]}
 
-    def _set_params(self, params: dict) -> None:
+    def _set_params(self, params: DirichletParams) -> None:
         self.alpha = params["alpha"]
 
     def predictive_mean_var(self) -> tuple[np.ndarray, np.ndarray]:
@@ -1381,24 +1442,24 @@ class MultivariateNormalKnownCov(ExponentialFamilyModel):
             - 0.5 * float(x @ self._Sigma_inv @ x)
         )
 
-    def log_normalizer(self, **params: Any) -> float:
+    def log_normalizer(self, params: MVNormalPrecisionParams) -> float:
         Lambda, mu = params["Lambda"], params["mu"]
         sign, logdet = np.linalg.slogdet(Lambda)
         if sign <= 0:
             return -np.inf
         return -0.5 * logdet + 0.5 * float(mu @ Lambda @ mu)
 
-    def _get_params(self) -> dict:
+    def _get_params(self) -> MVNormalPrecisionParams:
         return {"Lambda": self.Lambda, "mu": self.mu}
 
-    def _updated_params(self, stat: dict) -> dict:
+    def _updated_params(self, stat: dict) -> MVNormalPrecisionParams:
         Lambda_new = self.Lambda + stat["n"] * self._Sigma_inv
         mu_new = np.linalg.solve(
             Lambda_new, self.Lambda @ self.mu + self._Sigma_inv @ stat["x"]
         )
         return {"Lambda": Lambda_new, "mu": mu_new}
 
-    def _set_params(self, params: dict) -> None:
+    def _set_params(self, params: MVNormalPrecisionParams) -> None:
         self.Lambda = params["Lambda"]
         self.mu = params["mu"]
 
@@ -1484,7 +1545,7 @@ class MultivariateNormalKnownMean(ExponentialFamilyModel):
     def log_base_measure(self, x: np.ndarray) -> float:
         return -0.5 * self.dim * np.log(2 * np.pi)
 
-    def log_normalizer(self, **params: Any) -> float:
+    def log_normalizer(self, params: InverseWishartParams) -> float:
         nu, Psi = params["nu"], params["Psi"]
         D = self.dim
         sign, logdet = np.linalg.slogdet(Psi)
@@ -1492,16 +1553,16 @@ class MultivariateNormalKnownMean(ExponentialFamilyModel):
             return -np.inf
         return multigammaln(nu / 2.0, D) - (nu / 2.0) * logdet
 
-    def _get_params(self) -> dict:
+    def _get_params(self) -> InverseWishartParams:
         return {"nu": self.nu, "Psi": self.Psi}
 
-    def _updated_params(self, stat: dict) -> dict:
+    def _updated_params(self, stat: dict) -> InverseWishartParams:
         return {
             "nu": self.nu + stat["n"],
             "Psi": self.Psi + stat["scatter"],
         }
 
-    def _set_params(self, params: dict) -> None:
+    def _set_params(self, params: InverseWishartParams) -> None:
         self.nu = params["nu"]
         self.Psi = params["Psi"].copy()
 
