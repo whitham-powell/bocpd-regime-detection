@@ -22,9 +22,13 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from copy import deepcopy
+from typing import Any
 
 import numpy as np
-from scipy.special import gammaln, multigammaln
+from scipy.special import (
+    gammaln,
+    multigammaln,  # pyright: ignore[reportAttributeAccessIssue]
+)
 
 # =============================================================================
 # Base Interface — this is all BOCPD sees
@@ -127,10 +131,13 @@ class ExponentialFamilyModel(ObservationModel, ABC):
         """Compute log h(x), the base measure term."""
 
     @abstractmethod
-    def log_normalizer(self, **params) -> float:
+    def log_normalizer(self, **params: Any) -> float:
         """Log normalizing constant of the conjugate prior.
 
-        Parameters are the prior hyperparameters (distribution-specific).
+        Subclasses define their own keyword arguments matching their
+        hyperparameter names. The base class calls this via
+        ``self.log_normalizer(**params_dict)`` where the dict comes
+        from ``_get_params()`` or ``_updated_params()``.
         """
 
     @abstractmethod
@@ -217,25 +224,23 @@ class UnivariateNormalNIG(ExponentialFamilyModel):
         self._beta0 = beta0
 
     def sufficient_statistic(self, x: np.ndarray) -> dict:
-        x = float(x)
-        return {"x": x, "n": 1}
+        return {"x": float(x), "n": 1}
 
     def log_base_measure(self, x: np.ndarray) -> float:
         return -0.5 * np.log(2 * np.pi)
 
-    def log_normalizer(self, *, mu, kappa, alpha, beta) -> float:
+    def log_normalizer(self, **params: Any) -> float:
         """Log normalizing constant of the NIG distribution.
+
+        Params: mu, kappa, alpha, beta.
 
         Z(mu, kappa, alpha, beta) =
             (beta^alpha / Gamma(alpha)) * (2*pi / kappa)^{1/2}
 
-        So log Z = alpha * log(beta) - gammaln(alpha) + 0.5 * log(2*pi/kappa)
-
-        Note: we need the INVERSE of the normalizing constant for the prior
-        density, but since we take a ratio, the convention just needs to be
-        consistent. We use log Z = gammaln(alpha) - alpha*log(beta) + 0.5*log(kappa)
+        We use log Z = gammaln(alpha) - alpha*log(beta) - 0.5*log(kappa)
         which corresponds to the numerator terms that survive in the ratio.
         """
+        alpha, beta, kappa = params["alpha"], params["beta"], params["kappa"]
         return gammaln(alpha) - alpha * np.log(beta) - 0.5 * np.log(kappa)
 
     def _get_params(self) -> dict:
@@ -350,10 +355,10 @@ class MultivariateNormalNIW(ExponentialFamilyModel):
     def __init__(
         self,
         dim: int,
-        mu0: np.ndarray = None,
+        mu0: np.ndarray | None = None,
         kappa0: float = 1.0,
         nu0: float | None = None,
-        Psi0: np.ndarray = None,
+        Psi0: np.ndarray | None = None,
     ):
         self.dim = dim
 
@@ -382,15 +387,12 @@ class MultivariateNormalNIW(ExponentialFamilyModel):
     def log_base_measure(self, x: np.ndarray) -> float:
         return -0.5 * self.dim * np.log(2 * np.pi)
 
-    def log_normalizer(self, *, kappa, nu, Psi) -> float:
+    def log_normalizer(self, **params: Any) -> float:
         """Log normalizing constant of the NIW distribution.
 
-        The relevant terms that survive in the predictive ratio are:
-
-        log Z(kappa, nu, Psi) = multigammaln(nu/2, D)
-                                - (nu/2) * log|Psi|
-                                - (D/2) * log(kappa)
+        Params: kappa, nu, Psi.
         """
+        kappa, nu, Psi = params["kappa"], params["nu"], params["Psi"]
         D = self.dim
         sign, logdet_Psi = np.linalg.slogdet(Psi)
         if sign <= 0:
@@ -589,14 +591,13 @@ class PoissonGamma(ExponentialFamilyModel):
         self._beta0 = beta0
 
     def sufficient_statistic(self, x: np.ndarray) -> dict:
-        x = int(x)
-        return {"sum_x": x, "n": 1}
+        return {"sum_x": int(x), "n": 1}
 
     def log_base_measure(self, x: np.ndarray) -> float:
-        x = int(x)
-        return -gammaln(x + 1)  # -log(x!)
+        return float(-gammaln(int(x) + 1))  # -log(x!)
 
-    def log_normalizer(self, *, alpha, beta) -> float:
+    def log_normalizer(self, **params: Any) -> float:
+        alpha, beta = params["alpha"], params["beta"]
         return gammaln(alpha) - alpha * np.log(beta)
 
     def _get_params(self) -> dict:
@@ -889,7 +890,8 @@ class BernoulliBeta(ExponentialFamilyModel):
     def log_base_measure(self, x: np.ndarray) -> float:
         return 0.0
 
-    def log_normalizer(self, *, alpha, beta) -> float:
+    def log_normalizer(self, **params: Any) -> float:
+        alpha, beta = params["alpha"], params["beta"]
         return gammaln(alpha) + gammaln(beta) - gammaln(alpha + beta)
 
     def _get_params(self) -> dict:
@@ -960,7 +962,8 @@ class ExponentialGamma(ExponentialFamilyModel):
     def log_base_measure(self, x: np.ndarray) -> float:
         return 0.0
 
-    def log_normalizer(self, *, alpha, beta) -> float:
+    def log_normalizer(self, **params: Any) -> float:
+        alpha, beta = params["alpha"], params["beta"]
         return gammaln(alpha) - alpha * np.log(beta)
 
     def _get_params(self) -> dict:
@@ -1041,10 +1044,11 @@ class NormalKnownVariance(ExponentialFamilyModel):
         return {"x": float(x), "n": 1}
 
     def log_base_measure(self, x: np.ndarray) -> float:
-        x = float(x)
-        return -0.5 * np.log(2 * np.pi * self._sigma2) - x**2 / (2 * self._sigma2)
+        xf = float(x)
+        return -0.5 * np.log(2 * np.pi * self._sigma2) - xf**2 / (2 * self._sigma2)
 
-    def log_normalizer(self, *, tau, mu) -> float:
+    def log_normalizer(self, **params: Any) -> float:
+        tau, mu = params["tau"], params["mu"]
         return -0.5 * np.log(tau) + 0.5 * tau * mu**2
 
     def _get_params(self) -> dict:
@@ -1121,13 +1125,14 @@ class NormalKnownMean(ExponentialFamilyModel):
         self.beta = beta0
 
     def sufficient_statistic(self, x: np.ndarray) -> dict:
-        x = float(x)
-        return {"sq_dev": (x - self._mu_known) ** 2, "n": 1}
+        xf = float(x)
+        return {"sq_dev": (xf - self._mu_known) ** 2, "n": 1}
 
     def log_base_measure(self, x: np.ndarray) -> float:
         return -0.5 * np.log(2 * np.pi)
 
-    def log_normalizer(self, *, alpha, beta) -> float:
+    def log_normalizer(self, **params: Any) -> float:
+        alpha, beta = params["alpha"], params["beta"]
         return gammaln(alpha) - alpha * np.log(beta)
 
     def _get_params(self) -> dict:
@@ -1206,7 +1211,8 @@ class GeometricBeta(ExponentialFamilyModel):
     def log_base_measure(self, x: np.ndarray) -> float:
         return 0.0
 
-    def log_normalizer(self, *, alpha, beta) -> float:
+    def log_normalizer(self, **params: Any) -> float:
+        alpha, beta = params["alpha"], params["beta"]
         return gammaln(alpha) + gammaln(beta) - gammaln(alpha + beta)
 
     def _get_params(self) -> dict:
@@ -1286,7 +1292,8 @@ class MultinomialDirichlet(ExponentialFamilyModel):
         n = np.sum(x)
         return float(gammaln(n + 1) - np.sum(gammaln(x + 1)))
 
-    def log_normalizer(self, *, alpha) -> float:
+    def log_normalizer(self, **params: Any) -> float:
+        alpha = params["alpha"]
         return float(np.sum(gammaln(alpha)) - gammaln(np.sum(alpha)))
 
     def _get_params(self) -> dict:
@@ -1345,9 +1352,9 @@ class MultivariateNormalKnownCov(ExponentialFamilyModel):
     def __init__(
         self,
         dim: int,
-        mu0: np.ndarray = None,
-        Sigma0: np.ndarray = None,
-        Sigma: np.ndarray = None,
+        mu0: np.ndarray | None = None,
+        Sigma0: np.ndarray | None = None,
+        Sigma: np.ndarray | None = None,
     ):
         self.dim = dim
         self._mu0 = mu0 if mu0 is not None else np.zeros(dim)
@@ -1374,7 +1381,8 @@ class MultivariateNormalKnownCov(ExponentialFamilyModel):
             - 0.5 * float(x @ self._Sigma_inv @ x)
         )
 
-    def log_normalizer(self, *, Lambda, mu) -> float:
+    def log_normalizer(self, **params: Any) -> float:
+        Lambda, mu = params["Lambda"], params["mu"]
         sign, logdet = np.linalg.slogdet(Lambda)
         if sign <= 0:
             return -np.inf
@@ -1453,9 +1461,9 @@ class MultivariateNormalKnownMean(ExponentialFamilyModel):
     def __init__(
         self,
         dim: int,
-        mu_known: np.ndarray = None,
+        mu_known: np.ndarray | None = None,
         nu0: float | None = None,
-        Psi0: np.ndarray = None,
+        Psi0: np.ndarray | None = None,
     ):
         self.dim = dim
         self._mu_known = mu_known if mu_known is not None else np.zeros(dim)
@@ -1476,7 +1484,8 @@ class MultivariateNormalKnownMean(ExponentialFamilyModel):
     def log_base_measure(self, x: np.ndarray) -> float:
         return -0.5 * self.dim * np.log(2 * np.pi)
 
-    def log_normalizer(self, *, nu, Psi) -> float:
+    def log_normalizer(self, **params: Any) -> float:
+        nu, Psi = params["nu"], params["Psi"]
         D = self.dim
         sign, logdet = np.linalg.slogdet(Psi)
         if sign <= 0:
@@ -1594,12 +1603,12 @@ class StudentTFixedDf(ObservationModel):
 
     def log_predictive(self, x: np.ndarray) -> float:
         """Exact Student-t predictive log-density with fixed df = nu."""
-        x = float(x)
+        xf = float(x)
         nu = self.nu
         scale = self.beta * (self.kappa + 1.0) / (self.alpha * self.kappa)
-        z2 = (x - self.mu) ** 2 / (nu * scale)
+        z2 = (xf - self.mu) ** 2 / (nu * scale)
 
-        return (
+        return float(
             gammaln((nu + 1.0) / 2.0)
             - gammaln(nu / 2.0)
             - 0.5 * np.log(nu * np.pi * scale)
@@ -1608,21 +1617,23 @@ class StudentTFixedDf(ObservationModel):
 
     def update(self, x: np.ndarray) -> None:
         """Weighted NIG update — outliers are automatically downweighted."""
-        x = float(x)
+        xf = float(x)
         nu = self.nu
 
         # Current variance estimate
         sigma2_hat = self.beta / self.alpha
-        z2 = (x - self.mu) ** 2 / sigma2_hat
+        z2 = (xf - self.mu) ** 2 / sigma2_hat
 
         # Posterior expected mixing weight (downweights outliers)
         w_hat = (nu + 1.0) / (nu + z2)
 
         # Weighted NIG update
         kappa_new = self.kappa + w_hat
-        mu_new = (self.kappa * self.mu + w_hat * x) / kappa_new
+        mu_new = (self.kappa * self.mu + w_hat * xf) / kappa_new
         alpha_new = self.alpha + 0.5
-        beta_new = self.beta + 0.5 * w_hat * (x - self.mu) ** 2 * self.kappa / kappa_new
+        beta_new = (
+            self.beta + 0.5 * w_hat * (xf - self.mu) ** 2 * self.kappa / kappa_new
+        )
 
         self.mu = mu_new
         self.kappa = kappa_new
@@ -1634,7 +1645,7 @@ class StudentTFixedDf(ObservationModel):
         nu = self.nu
         scale = self.beta * (self.kappa + 1.0) / (self.alpha * self.kappa)
         mean = self.mu
-        var = scale * nu / (nu - 2.0) if nu > 2.0 else np.inf
+        var = float(scale * nu / (nu - 2.0)) if nu > 2.0 else float(np.inf)
         return (mean, var)
 
     def to_dict(self) -> dict:
@@ -1712,10 +1723,10 @@ class MultivariateStudentTFixedDf(ObservationModel):
         self,
         dim: int,
         nu: float = 4.0,
-        mu0: np.ndarray = None,
+        mu0: np.ndarray | None = None,
         kappa0: float = 1.0,
         nu0: float | None = None,
-        Psi0: np.ndarray = None,
+        Psi0: np.ndarray | None = None,
     ):
         if nu <= 0:
             raise ValueError(f"nu must be > 0, got {nu}")
@@ -2082,10 +2093,10 @@ class MultivariateStudentTGridDf(MultivariateStudentTAdaptiveDf):
         self,
         dim: int,
         nu_grid: list[float] | None = None,
-        mu0: np.ndarray = None,
+        mu0: np.ndarray | None = None,
         kappa0: float = 1.0,
         nu0: float | None = None,
-        Psi0: np.ndarray = None,
+        Psi0: np.ndarray | None = None,
     ):
         if nu_grid is None:
             nu_grid = [2.0, 3.0, 5.0, 10.0, 30.0]

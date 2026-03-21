@@ -19,13 +19,16 @@ Adams, R. P., & MacKay, D. J. C. (2007).
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
 from .hazard import ConstantHazard, hazard_from_dict
 from .observation_model import (
     MultivariateNormalNIW,
+    ObservationModel,
     _NIWBatch,
     model_from_dict,
 )
@@ -63,8 +66,8 @@ class BOCPD:
 
     def __init__(
         self,
-        model_factory: callable,
-        hazard_fn: callable | None = None,
+        model_factory: Callable[[], ObservationModel],
+        hazard_fn: Any = None,
         r_max: int | None = None,
     ):
         self.model_factory = model_factory
@@ -123,6 +126,8 @@ class BOCPD:
 
     def _step_sequential(self, x: np.ndarray) -> dict:
         """One step of the sequential algorithm. Mutates internal state."""
+        assert self._joint is not None
+        assert self._models is not None
         joint = self._joint
         models = self._models
         n_run_lengths = len(joint)
@@ -207,6 +212,9 @@ class BOCPD:
 
     def _step_vectorized(self, x: np.ndarray) -> dict:
         """One step of the vectorized algorithm. Mutates internal state."""
+        assert self._joint is not None
+        assert self._batch is not None
+        assert self.r_max is not None
         joint = self._joint
         batch = self._batch
         n_run_lengths = len(joint)
@@ -290,6 +298,7 @@ class BOCPD:
 
         for t in range(T):
             summary = self.step(data[t])
+            assert self._joint is not None
             run_length_posterior.append(self._joint.copy())
             change_point_prob[t] = summary["change_point_prob"]
             map_run_length[t] = summary["map_run_length"]
@@ -350,6 +359,7 @@ class BOCPD:
         """
         if not self._is_initialized():
             raise RuntimeError("No state to save — call step() or warm_up() first.")
+        assert self._joint is not None  # narrowing for pyright
 
         state = {
             "t": self._t,
@@ -360,10 +370,10 @@ class BOCPD:
         }
 
         if self._use_vectorized:
+            assert self._batch is not None
             state["batch"] = self._batch.to_dict()
         else:
-            # Store model_factory recipe from first model (prior params)
-            # and per-model state
+            assert self._models is not None
             state["models"] = [m.to_dict() for m in self._models]
 
         Path(path).write_text(json.dumps(state, indent=2))
