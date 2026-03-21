@@ -229,19 +229,18 @@ class UnivariateNormalNIG(ExponentialFamilyModel):
     def log_base_measure(self, x: np.ndarray) -> float:
         return -0.5 * np.log(2 * np.pi)
 
-    def log_normalizer(self, *, mu, kappa, alpha, beta) -> float:
+    def log_normalizer(self, **params: Any) -> float:
         """Log normalizing constant of the NIG distribution.
+
+        Params: mu, kappa, alpha, beta.
 
         Z(mu, kappa, alpha, beta) =
             (beta^alpha / Gamma(alpha)) * (2*pi / kappa)^{1/2}
 
-        So log Z = alpha * log(beta) - gammaln(alpha) + 0.5 * log(2*pi/kappa)
-
-        Note: we need the INVERSE of the normalizing constant for the prior
-        density, but since we take a ratio, the convention just needs to be
-        consistent. We use log Z = gammaln(alpha) - alpha*log(beta) + 0.5*log(kappa)
+        We use log Z = gammaln(alpha) - alpha*log(beta) - 0.5*log(kappa)
         which corresponds to the numerator terms that survive in the ratio.
         """
+        alpha, beta, kappa = params["alpha"], params["beta"], params["kappa"]
         return gammaln(alpha) - alpha * np.log(beta) - 0.5 * np.log(kappa)
 
     def _get_params(self) -> dict:
@@ -388,15 +387,12 @@ class MultivariateNormalNIW(ExponentialFamilyModel):
     def log_base_measure(self, x: np.ndarray) -> float:
         return -0.5 * self.dim * np.log(2 * np.pi)
 
-    def log_normalizer(self, *, kappa, nu, Psi) -> float:
+    def log_normalizer(self, **params: Any) -> float:
         """Log normalizing constant of the NIW distribution.
 
-        The relevant terms that survive in the predictive ratio are:
-
-        log Z(kappa, nu, Psi) = multigammaln(nu/2, D)
-                                - (nu/2) * log|Psi|
-                                - (D/2) * log(kappa)
+        Params: kappa, nu, Psi.
         """
+        kappa, nu, Psi = params["kappa"], params["nu"], params["Psi"]
         D = self.dim
         sign, logdet_Psi = np.linalg.slogdet(Psi)
         if sign <= 0:
@@ -600,7 +596,8 @@ class PoissonGamma(ExponentialFamilyModel):
     def log_base_measure(self, x: np.ndarray) -> float:
         return float(-gammaln(int(x) + 1))  # -log(x!)
 
-    def log_normalizer(self, *, alpha, beta) -> float:
+    def log_normalizer(self, **params: Any) -> float:
+        alpha, beta = params["alpha"], params["beta"]
         return gammaln(alpha) - alpha * np.log(beta)
 
     def _get_params(self) -> dict:
@@ -893,7 +890,8 @@ class BernoulliBeta(ExponentialFamilyModel):
     def log_base_measure(self, x: np.ndarray) -> float:
         return 0.0
 
-    def log_normalizer(self, *, alpha, beta) -> float:
+    def log_normalizer(self, **params: Any) -> float:
+        alpha, beta = params["alpha"], params["beta"]
         return gammaln(alpha) + gammaln(beta) - gammaln(alpha + beta)
 
     def _get_params(self) -> dict:
@@ -964,7 +962,8 @@ class ExponentialGamma(ExponentialFamilyModel):
     def log_base_measure(self, x: np.ndarray) -> float:
         return 0.0
 
-    def log_normalizer(self, *, alpha, beta) -> float:
+    def log_normalizer(self, **params: Any) -> float:
+        alpha, beta = params["alpha"], params["beta"]
         return gammaln(alpha) - alpha * np.log(beta)
 
     def _get_params(self) -> dict:
@@ -1048,7 +1047,8 @@ class NormalKnownVariance(ExponentialFamilyModel):
         xf = float(x)
         return -0.5 * np.log(2 * np.pi * self._sigma2) - xf**2 / (2 * self._sigma2)
 
-    def log_normalizer(self, *, tau, mu) -> float:
+    def log_normalizer(self, **params: Any) -> float:
+        tau, mu = params["tau"], params["mu"]
         return -0.5 * np.log(tau) + 0.5 * tau * mu**2
 
     def _get_params(self) -> dict:
@@ -1131,7 +1131,8 @@ class NormalKnownMean(ExponentialFamilyModel):
     def log_base_measure(self, x: np.ndarray) -> float:
         return -0.5 * np.log(2 * np.pi)
 
-    def log_normalizer(self, *, alpha, beta) -> float:
+    def log_normalizer(self, **params: Any) -> float:
+        alpha, beta = params["alpha"], params["beta"]
         return gammaln(alpha) - alpha * np.log(beta)
 
     def _get_params(self) -> dict:
@@ -1210,7 +1211,8 @@ class GeometricBeta(ExponentialFamilyModel):
     def log_base_measure(self, x: np.ndarray) -> float:
         return 0.0
 
-    def log_normalizer(self, *, alpha, beta) -> float:
+    def log_normalizer(self, **params: Any) -> float:
+        alpha, beta = params["alpha"], params["beta"]
         return gammaln(alpha) + gammaln(beta) - gammaln(alpha + beta)
 
     def _get_params(self) -> dict:
@@ -1290,7 +1292,8 @@ class MultinomialDirichlet(ExponentialFamilyModel):
         n = np.sum(x)
         return float(gammaln(n + 1) - np.sum(gammaln(x + 1)))
 
-    def log_normalizer(self, *, alpha) -> float:
+    def log_normalizer(self, **params: Any) -> float:
+        alpha = params["alpha"]
         return float(np.sum(gammaln(alpha)) - gammaln(np.sum(alpha)))
 
     def _get_params(self) -> dict:
@@ -1378,7 +1381,8 @@ class MultivariateNormalKnownCov(ExponentialFamilyModel):
             - 0.5 * float(x @ self._Sigma_inv @ x)
         )
 
-    def log_normalizer(self, *, Lambda, mu) -> float:
+    def log_normalizer(self, **params: Any) -> float:
+        Lambda, mu = params["Lambda"], params["mu"]
         sign, logdet = np.linalg.slogdet(Lambda)
         if sign <= 0:
             return -np.inf
@@ -1480,7 +1484,8 @@ class MultivariateNormalKnownMean(ExponentialFamilyModel):
     def log_base_measure(self, x: np.ndarray) -> float:
         return -0.5 * self.dim * np.log(2 * np.pi)
 
-    def log_normalizer(self, *, nu, Psi) -> float:
+    def log_normalizer(self, **params: Any) -> float:
+        nu, Psi = params["nu"], params["Psi"]
         D = self.dim
         sign, logdet = np.linalg.slogdet(Psi)
         if sign <= 0:

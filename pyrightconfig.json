@@ -1,4 +1,3 @@
 {
-  "include": ["src/bocpd"],
-  "reportIncompatibleMethodOverride": "warning"
+  "include": ["src/bocpd"]
 }
